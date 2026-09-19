@@ -3,232 +3,104 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <meta name="theme-color" content="#05070b" />
+  <meta name="theme-color" content="#141311" />
   <meta name="description" content="Mandate is an enforcement gateway for AI-agent grants: scoped authorization, budget-aware controls, human approval, destination policy, and signed execution receipts." />
-  <meta property="og:title" content="Mandate — Authorization before execution" />
-  <meta property="og:description" content="Fail-closed enforcement for AI agents. No valid authorization, no upstream execution." />
-  <meta property="og:type" content="website" />
   <title>Mandate — Authorization before execution</title>
+  <link rel="icon" href="favicon.svg" type="image/svg+xml" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Outfit:wght@400;500;600;700&family=Syne:wght@600;700;800&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Source+Sans+3:ital,wght@0,400;0,500;0,600;0,700;1,400&family=Source+Serif+4:opsz,wght@8..60,500;8..60,600;8..60,700&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
-  <div class="noise" aria-hidden="true"></div>
-  <div class="orb orb-a" aria-hidden="true"></div>
-  <div class="orb orb-b" aria-hidden="true"></div>
-  <div class="grid-floor" aria-hidden="true"></div>
-
   <a class="skip" href="#main">Skip to content</a>
-
   <header class="nav">
-    <div class="wrap nav-inner">
+    <div class="wrap nav-row">
       <a class="brand" href="#top">
-        <span class="logo" aria-hidden="true">
-          <svg viewBox="0 0 36 36" fill="none">
-            <rect x="1.2" y="1.2" width="33.6" height="33.6" rx="9" stroke="currentColor" stroke-opacity=".35"/>
-            <path d="M9 25V11l9 9 9-9v14" stroke="url(#g)" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"/>
-            <defs><linearGradient id="g" x1="9" y1="11" x2="27" y2="25"><stop stop-color="#7CFFD0"/><stop offset="1" stop-color="#6B8CFF"/></linearGradient></defs>
-          </svg>
-        </span>
-        <span class="brand-copy">
-          <b>Mandate</b>
-          <small>v0.2.1</small>
-        </span>
+        <svg class="mark" viewBox="0 0 32 32" aria-hidden="true">
+          <path d="M9 8v16M23 8v16M13 13h6v6h-6z" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square"/>
+        </svg>
+        <span>Mandate</span>
+        <span class="ver">v0.2.1</span>
       </a>
-      <nav class="nav-links" id="nav-links">
-        <a href="#invariant">Invariant</a>
-        <a href="#flow">Control plane</a>
-        <a href="#guarantees">Guarantees</a>
+      <nav class="links" id="nav-links">
+        <a href="#flow">How it works</a>
         <a href="#security">Hardening</a>
         <a href="#api">API</a>
         <a href="#scope">Scope</a>
       </nav>
-      <div class="nav-actions">
-        <a class="btn ghost" href="https://github.com/BEKO2210/mandate/blob/main/docs/THREAT_MODEL.md">Threat model</a>
-        <a class="btn primary" href="https://github.com/BEKO2210/mandate">GitHub</a>
-        <button class="menu" id="menu" type="button" aria-expanded="false" aria-controls="nav-links" aria-label="Open menu">
+      <div class="nav-end">
+        <a class="btn btn-ghost" href="https://github.com/BEKO2210/mandate/blob/main/docs/THREAT_MODEL.md">Threat model</a>
+        <a class="btn btn-solid" href="https://github.com/BEKO2210/mandate">GitHub</a>
+        <button class="menu" id="menu" type="button" aria-expanded="false" aria-controls="nav-links" aria-label="Menu">
           <span></span><span></span>
         </button>
       </div>
     </div>
   </header>
-
   <main id="main">
     <section class="hero" id="top">
       <div class="wrap hero-grid">
-        <div class="hero-copy reveal">
-          <p class="chip"><span class="pulse"></span> v0.2.1 hardening · 71/71 tests passing</p>
-          <h1>
-            Authorization
-            <em>before</em>
-            execution.
-          </h1>
-          <p class="lead">
-            Mandate is an enforcement gateway for AI-agent grants. It turns principal intent into scoped, budget-aware, auditable authority — and refuses the upstream call when that authority is missing.
-          </p>
-          <div class="hero-cta">
-            <a class="btn primary lg" href="https://github.com/BEKO2210/mandate">
-              View source
-              <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M6 3l5 5-5 5V3z"/></svg>
-            </a>
-            <a class="btn ghost lg" href="#flow">See the control plane</a>
+        <div>
+          <p class="eyebrow">Enforcement gateway · 71 of 71 tests passing</p>
+          <h1>Authorization before execution.</h1>
+          <p class="lead">Mandate sits in front of protected tools. An AI agent may propose an action. It does not execute until a signed, scoped, budget-aware grant has been verified.</p>
+          <div class="actions">
+            <a class="btn btn-solid" href="https://github.com/BEKO2210/mandate">View source</a>
+            <a class="btn btn-ghost" href="#flow">See the control plane</a>
           </div>
-          <dl class="metrics">
-            <div><dt>71/71</dt><dd>verified tests</dd></div>
-            <div><dt>32 KiB</dt><dd>pre-buffer body cap</dd></div>
-            <div><dt>Fail-closed</dt><dd>destination policy</dd></div>
-            <div><dt>Signed</dt><dd>execution receipts</dd></div>
-          </dl>
         </div>
-
-        <aside class="hero-stage reveal" aria-hidden="true">
-          <div class="stage-frame">
-            <div class="stage-glow"></div>
-            <svg class="constellation" viewBox="0 0 520 560" role="img">
-              <defs>
-                <linearGradient id="line" x1="0" x2="1"><stop stop-color="#7CFFD0"/><stop offset="1" stop-color="#6B8CFF"/></linearGradient>
-                <filter id="soft"><feGaussianBlur stdDeviation="8"/></filter>
-              </defs>
-              <circle class="node-glow" cx="90" cy="90" r="28" fill="#7CFFD0" opacity=".18" filter="url(#soft)"/>
-              <circle class="node-glow" cx="430" cy="170" r="34" fill="#6B8CFF" opacity=".2" filter="url(#soft)"/>
-              <circle class="node-glow" cx="250" cy="300" r="46" fill="#7CFFD0" opacity=".16" filter="url(#soft)"/>
-              <path class="trace" d="M90 90 C160 90, 180 170, 250 170 S340 170, 430 170" stroke="url(#line)" stroke-width="1.4" fill="none"/>
-              <path class="trace d2" d="M250 170 C250 210, 250 250, 250 300" stroke="url(#line)" stroke-width="1.4" fill="none"/>
-              <path class="trace d3" d="M250 300 C160 300, 120 390, 90 430" stroke="url(#line)" stroke-width="1.4" fill="none"/>
-              <path class="trace d4" d="M250 300 C340 300, 390 390, 430 430" stroke="url(#line)" stroke-width="1.4" fill="none"/>
-              <g class="hub">
-                <rect x="186" y="258" width="128" height="84" rx="16" fill="#0b1118" stroke="#2a3d52"/>
-                <text x="250" y="294" text-anchor="middle" fill="#eef6ff" font-size="13" font-family="Outfit">MANDATE</text>
-                <text x="250" y="314" text-anchor="middle" fill="#7CFFD0" font-size="10" font-family="IBM Plex Mono">ENFORCE</text>
-              </g>
-              <g>
-                <rect x="28" y="58" width="124" height="64" rx="12" fill="#0b1118" stroke="#243445"/>
-                <text x="90" y="86" text-anchor="middle" fill="#c9d7e6" font-size="11">PRINCIPAL</text>
-                <text x="90" y="104" text-anchor="middle" fill="#7a8ea3" font-size="9">signed grant</text>
-              </g>
-              <g>
-                <rect x="368" y="138" width="124" height="64" rx="12" fill="#0b1118" stroke="#243445"/>
-                <text x="430" y="166" text-anchor="middle" fill="#c9d7e6" font-size="11">AGENT INTENT</text>
-                <text x="430" y="184" text-anchor="middle" fill="#7a8ea3" font-size="9">proposed action</text>
-              </g>
-              <g>
-                <rect x="28" y="398" width="124" height="64" rx="12" fill="#0b1118" stroke="#243445"/>
-                <text x="90" y="426" text-anchor="middle" fill="#c9d7e6" font-size="11">HUMAN STEP-UP</text>
-                <text x="90" y="444" text-anchor="middle" fill="#7a8ea3" font-size="9">when required</text>
-              </g>
-              <g>
-                <rect x="368" y="398" width="124" height="64" rx="12" fill="#0b1118" stroke="#243445"/>
-                <text x="430" y="426" text-anchor="middle" fill="#c9d7e6" font-size="11">UPSTREAM</text>
-                <text x="430" y="444" text-anchor="middle" fill="#7a8ea3" font-size="9">registered route</text>
-              </g>
-            </svg>
-            <div class="stage-caption">
-              <span class="live"></span>
-              No valid authorization → no upstream execution
-            </div>
-          </div>
+        <aside class="hero-panel" aria-label="Product invariant">
+          <p class="panel-kicker">Invariant</p>
+          <p class="panel-rule">No valid authorization<br>= no upstream execution</p>
+          <ul class="panel-meta">
+            <li><span>71/71</span> verified tests</li>
+            <li><span>32 KiB</span> pre-buffer body cap</li>
+            <li><span>Fail-closed</span> destination policy</li>
+            <li><span>Signed</span> execution receipts</li>
+          </ul>
         </aside>
       </div>
     </section>
-
-    <section class="band" id="invariant">
-      <div class="wrap reveal">
-        <p class="kicker">Security invariant</p>
-        <h2 class="display">If the grant is invalid,<br />the tool never runs.</h2>
-        <p class="section-lead">Agents may propose. They do not choose destinations, invent authority, or skip the ledger. Mandate sits in front of the protected connector and evaluates identity, grant, policy, audience, nonce, budget, and human step-up before any request leaves the boundary.</p>
-      </div>
-    </section>
-
     <section id="flow">
       <div class="wrap">
-        <div class="reveal">
-          <p class="kicker">Control plane</p>
-          <h2>A state machine, not a suggestion.</h2>
-          <p class="section-lead">Every intent is checked against a signed grant, a server-side route registry, and an atomic SQLite ledger. Outcomes are explicit: authorized, denied, human-required, executed, failed, or unknown.</p>
-        </div>
-        <ol class="steps">
-          <li class="reveal">
-            <span class="n">01</span>
-            <h3>Principal defines authority</h3>
-            <p>A scoped, time-bound, budget-bound grant is issued. Agent claims are not authority by themselves.</p>
-          </li>
-          <li class="reveal">
-            <span class="n">02</span>
-            <h3>Agent submits intent</h3>
-            <p>The request names an action. It cannot supply a target URL, host, proxy, or network policy.</p>
-          </li>
-          <li class="reveal">
-            <span class="n">03</span>
-            <h3>Gateway evaluates</h3>
-            <p>Identity, grant, audience binding, nonce, budget reservation, destination policy, and optional human approval.</p>
-          </li>
-          <li class="reveal">
-            <span class="n">04</span>
-            <h3>Trusted connector fires</h3>
-            <p>Only a registered route is reachable. Redirects are not followed. A signed receipt records the result.</p>
-          </li>
+        <p class="kicker">Control plane</p>
+        <h2>A state machine, not a suggestion.</h2>
+        <p class="section-lead">Every intent is checked against a signed grant, a server-side route registry, and an atomic ledger. Outcomes are explicit: authorized, denied, human-required, executed, failed, or unknown.</p>
+        <ol class="pipeline" aria-label="Mandate authorization pipeline">
+          <li><span class="step">01</span><strong>Principal</strong><span>Issues a signed grant with scope, time, and budget.</span></li>
+          <li><span class="step">02</span><strong>Agent intent</strong><span>Names an action. Cannot supply a URL, host, or network policy.</span></li>
+          <li><span class="step">03</span><strong>Mandate</strong><span>Verifies identity, grant, audience, nonce, budget, and destination.</span></li>
+          <li><span class="step">04</span><strong>Human step-up</strong><span>If required, approval revalidates the grant. It is not a shortcut.</span></li>
+          <li><span class="step">05</span><strong>Registered route</strong><span>Only the trusted connector may call the upstream. Redirects are not followed.</span></li>
+          <li><span class="step">06</span><strong>Signed receipt</strong><span>The result is recorded, including EXECUTION_UNKNOWN when the remote side is unclear.</span></li>
         </ol>
       </div>
     </section>
-
     <section id="guarantees">
       <div class="wrap">
-        <div class="reveal">
-          <p class="kicker">Core guarantees</p>
-          <h2>Narrow boundary. Explicit invariants.</h2>
-        </div>
-        <div class="cards">
-          <article class="card reveal">
-            <div class="icon"><svg viewBox="0 0 24 24" fill="none"><path d="M7 11V8a5 5 0 0 1 10 0v3M6 11h12v10H6V11z" stroke="currentColor" stroke-width="1.6"/></svg></div>
-            <h3>Cryptographic grants</h3>
-            <p>Principal authorization is signed and independently verifiable. The agent cannot mint power by assertion.</p>
-          </article>
-          <article class="card reveal">
-            <div class="icon"><svg viewBox="0 0 24 24" fill="none"><path d="M4 7h16M4 12h10M4 17h7" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><circle cx="18" cy="16.5" r="3.2" stroke="currentColor" stroke-width="1.6"/></svg></div>
-            <h3>Atomic budget accounting</h3>
-            <p>Reserve, commit, and release live in the ledger. v0.2.1 binds spend to the authorization day, not the execution clock.</p>
-          </article>
-          <article class="card reveal">
-            <div class="icon"><svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="8" r="3.2" stroke="currentColor" stroke-width="1.6"/><path d="M5 19c1.4-3 3.9-4.5 7-4.5S17.6 16 19 19" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></div>
-            <h3>Human approval that revalidates</h3>
-            <p>Step-up is not an execution shortcut. The grant is re-evaluated and the authorization boundary is preserved.</p>
-          </article>
-          <article class="card reveal">
-            <div class="icon"><svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="8.2" stroke="currentColor" stroke-width="1.6"/><path d="M3.5 12h17M12 3.8c2.4 2.6 3.6 5.4 3.6 8.2S14.4 17.6 12 20.2C9.6 17.6 8.4 14.8 8.4 12S9.6 6.4 12 3.8z" stroke="currentColor" stroke-width="1.4"/></svg></div>
-            <h3>Server-side destinations</h3>
-            <p>Routes come from a trusted registry. Public is the default. Private networks require explicit server-side opt-in.</p>
-          </article>
-          <article class="card reveal">
-            <div class="icon"><svg viewBox="0 0 24 24" fill="none"><path d="M12 7v5l3 2" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><circle cx="12" cy="12" r="8.2" stroke="currentColor" stroke-width="1.6"/></svg></div>
-            <h3>Uncertainty stays explicit</h3>
-            <p>A timeout becomes EXECUTION_UNKNOWN. The reservation is kept instead of pretending the remote side failed.</p>
-          </article>
-          <article class="card reveal">
-            <div class="icon"><svg viewBox="0 0 24 24" fill="none"><path d="M7 17l5-10 5 10M9 13h6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
-            <h3>Signed execution receipts</h3>
-            <p>Outcomes are enforcer-signed objects. Downstream systems get a durable record, not a log line that can drift.</p>
-          </article>
+        <p class="kicker">Core guarantees</p>
+        <h2>A narrow boundary with explicit invariants.</h2>
+        <div class="facts">
+          <article><h3>Cryptographic grants</h3><p>Principal authorization is signed and independently verifiable. Agent claims are not authority.</p></article>
+          <article><h3>Atomic budget accounting</h3><p>Reserve, commit, and release live in the ledger. v0.2.1 binds spend to the authorization day.</p></article>
+          <article><h3>Human approval that revalidates</h3><p>Step-up does not skip evaluation. The grant is checked again before execution.</p></article>
+          <article><h3>Server-side destinations</h3><p>Routes come from a trusted registry. Public is the default. Private requires server-side opt-in.</p></article>
+          <article><h3>Uncertainty stays explicit</h3><p>A timeout becomes EXECUTION_UNKNOWN. The reservation is kept instead of guessed away.</p></article>
+          <article><h3>Signed execution receipts</h3><p>Outcomes are enforcer-signed objects for audit, not log lines that can drift.</p></article>
         </div>
       </div>
     </section>
-
     <section id="security">
       <div class="wrap">
-        <div class="reveal">
-          <p class="kicker">Hardening status</p>
-          <h2>Proven as behavior, not as copy.</h2>
-          <p class="section-lead">v0.2.1 was reproduced from a clean clone with 71 tests passing — zero failures, zero skips, zero xfails.</p>
-        </div>
+        <p class="kicker">Hardening status</p>
+        <h2>Proven as behavior, not as copy.</h2>
+        <p class="section-lead">v0.2.1 was reproduced from a clean clone with 71 tests passing — zero failures, zero skips, zero xfails.</p>
         <div class="sec-grid">
-          <div class="terminal reveal">
-            <div class="termbar">
-              <i></i><i></i><i></i>
-              <span>pytest · fresh clone</span>
-            </div>
-            <pre><span class="cmt">$</span> pytest -q
-<span class="dim">.......................................................................  [100%]</span>
+          <div class="terminal">
+            <div class="termbar">pytest · fresh clone</div>
+            <pre><span class="muted">$</span> pytest -q
+<span class="muted">.......................................................................  [100%]</span>
 <span class="ok">71 passed</span>
 
 <span class="ok">SH-01 PASS</span>  Budget-day binding
@@ -242,35 +114,19 @@
   oversized bodies rejected before unbounded buffering
   exactly one 413 response is emitted</pre>
           </div>
-          <div class="proof-stack">
-            <article class="proof done reveal">
-              <header><strong>SH-01 Budget-day binding</strong><span>Closed</span></header>
-              <p>Commit, release, unknown, and human-approved paths use the persisted authorization-day binding.</p>
-            </article>
-            <article class="proof done reveal">
-              <header><strong>SH-02 Destination policy</strong><span>Closed</span></header>
-              <p>Public destinations are the default. Agent-controlled policy overrides are forbidden.</p>
-            </article>
-            <article class="proof done reveal">
-              <header><strong>SH-03 Body-limit protocol</strong><span>Closed</span></header>
-              <p>Oversized payloads terminate at the ASGI boundary. Only a single 413 is written.</p>
-            </article>
-            <article class="proof limit reveal">
-              <header><strong>HTTPS DNS TOCTOU</strong><span>Known</span></header>
-              <p>HTTPS still resolves by hostname for SNI and certificate validation. The TLS peer IP is not pinned.</p>
-            </article>
-            <article class="proof limit reveal">
-              <header><strong>Legacy receipts</strong><span>Known</span></header>
-              <p>Receipts created before persisted budget bindings may fall back to an execution-day lookup.</p>
-            </article>
+          <div class="status-list">
+            <article><header><strong>SH-01 Budget-day binding</strong><span class="tag tag-ok">Closed</span></header><p>Commit, release, unknown, and human-approved paths use the persisted authorization-day binding.</p></article>
+            <article><header><strong>SH-02 Destination policy</strong><span class="tag tag-ok">Closed</span></header><p>Public destinations are the default. Agent-controlled policy overrides are forbidden.</p></article>
+            <article><header><strong>SH-03 Body-limit protocol</strong><span class="tag tag-ok">Closed</span></header><p>Oversized payloads terminate at the ASGI boundary. Only a single 413 is written.</p></article>
+            <article><header><strong>HTTPS DNS TOCTOU</strong><span class="tag tag-note">Known limit</span></header><p>HTTPS still resolves by hostname for SNI and certificate validation. The TLS peer IP is not pinned.</p></article>
+            <article><header><strong>Legacy receipts</strong><span class="tag tag-note">Known limit</span></header><p>Receipts created before persisted budget bindings may fall back to an execution-day lookup.</p></article>
           </div>
         </div>
       </div>
     </section>
-
     <section id="api">
       <div class="wrap api-grid">
-        <div class="reveal">
+        <div>
           <p class="kicker">Developer surface</p>
           <h2>Small on purpose.</h2>
           <p class="section-lead">The gateway exposes only what is required to submit intent, attach constrained approval, inspect receipts, and check health.</p>
@@ -281,11 +137,8 @@
             <li><code>GET /health</code><span>Gateway health and enforcer identity.</span></li>
           </ul>
         </div>
-        <div class="codebox reveal">
-          <div class="codehead">
-            <span>routes.py · trusted registry</span>
-            <button class="copy" type="button" data-copy>Copy</button>
-          </div>
+        <div class="codebox">
+          <div class="codehead"><span>routes.py · trusted registry</span><button class="copy" type="button" data-copy>Copy</button></div>
           <pre id="snippet">Route(
   audience="mandate://procurement",
   base_url="https://api.example.com",
@@ -301,16 +154,13 @@
         </div>
       </div>
     </section>
-
     <section id="scope">
       <div class="wrap">
-        <div class="reveal">
-          <p class="kicker">Deliberate scope</p>
-          <h2>Not an identity stack. Not a payment network.</h2>
-          <p class="section-lead">Keeping the product narrow makes the security properties testable. Mandate is an enforcement gateway for AI-agent grants — nothing more is claimed in v0.2.1.</p>
-        </div>
+        <p class="kicker">Deliberate scope</p>
+        <h2>Not an identity stack. Not a payment network.</h2>
+        <p class="section-lead">Keeping the product narrow makes the security properties testable. Mandate is an enforcement gateway for AI-agent grants — nothing more is claimed in v0.2.1.</p>
         <div class="scope-grid">
-          <article class="scope in reveal">
+          <article>
             <h3>In v0.2.1</h3>
             <ul>
               <li>Signed grants and constraints</li>
@@ -322,7 +172,7 @@
               <li>Signed receipts and audit records</li>
             </ul>
           </article>
-          <article class="scope out reveal">
+          <article>
             <h3>Not in v0.2.1</h3>
             <ul>
               <li>MCP or A2A adapters</li>
@@ -337,31 +187,26 @@
         </div>
       </div>
     </section>
-
     <section class="finale">
-      <div class="wrap reveal">
-        <div class="cta">
-          <div>
-            <p class="kicker">Next step</p>
-            <h2>Give agents less implicit power.</h2>
-            <p>Make authority explicit, bounded, auditable, and verifiable before a protected action crosses the network boundary.</p>
-          </div>
-          <div class="cta-actions">
-            <a class="btn primary lg" href="https://github.com/BEKO2210/mandate">Explore the source</a>
-            <a class="btn ghost lg" href="https://github.com/BEKO2210/mandate/blob/main/docs/SECURITY_BACKLOG.md">Security backlog</a>
-          </div>
+      <div class="wrap cta">
+        <div>
+          <p class="kicker">Next step</p>
+          <h2>Give agents less implicit power.</h2>
+          <p>Make authority explicit, bounded, auditable, and verifiable before a protected action crosses the network boundary.</p>
+        </div>
+        <div class="actions">
+          <a class="btn btn-solid" href="https://github.com/BEKO2210/mandate">Explore the source</a>
+          <a class="btn btn-ghost" href="https://github.com/BEKO2210/mandate/blob/main/docs/SECURITY_BACKLOG.md">Security backlog</a>
         </div>
       </div>
     </section>
   </main>
-
   <footer>
     <div class="wrap foot">
       <span>Mandate v0.2.1 · Enforcement gateway for AI-agent grants.</span>
-      <span>Open source · <a href="https://github.com/BEKO2210/mandate">BEKO2210/mandate</a></span>
+      <a href="https://github.com/BEKO2210/mandate">BEKO2210/mandate</a>
     </div>
   </footer>
-
   <script src="script.js"></script>
 </body>
 </html>
