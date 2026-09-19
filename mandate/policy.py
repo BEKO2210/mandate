@@ -10,7 +10,13 @@ def _parse(ts: str) -> datetime:
     return datetime.strptime(ts, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
 
 
-def evaluate(grant: Grant, intent: Intent, spent_today: float = 0.0) -> Decision:
+def evaluate(
+    grant: Grant,
+    intent: Intent,
+    spent_today: float = 0.0,
+    skip_human: bool = False,
+    allowed_audiences: list[str] | None = None,
+) -> Decision:
     reasons: list[str] = []
     now = datetime.now(timezone.utc)
 
@@ -24,6 +30,10 @@ def evaluate(grant: Grant, intent: Intent, spent_today: float = 0.0) -> Decision
         reasons.append("grant expired")
     if intent.action not in grant.scopes and not _scope_matches(intent.action, grant.scopes):
         reasons.append(f"action '{intent.action}' is outside scopes {grant.scopes}")
+
+    grant_audiences = (grant.constraints or {}).get("audiences") or allowed_audiences
+    if grant_audiences and intent.audience not in grant_audiences:
+        reasons.append(f"audience '{intent.audience}' not permitted by grant")
 
     c: dict[str, Any] = grant.constraints or {}
     amount = intent.amount
@@ -46,7 +56,13 @@ def evaluate(grant: Grant, intent: Intent, spent_today: float = 0.0) -> Decision
 
     requires_human = False
     threshold = c.get("require_human_above")
-    if amount is not None and threshold is not None and amount > float(threshold) and not reasons:
+    if (
+        not skip_human
+        and amount is not None
+        and threshold is not None
+        and amount > float(threshold)
+        and not reasons
+    ):
         requires_human = True
         reasons.append(f"amount {amount} requires human approval above {threshold}")
 
