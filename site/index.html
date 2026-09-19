@@ -4,9 +4,11 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="theme-color" content="#141311" />
-  <meta name="description" content="Mandate is an enforcement gateway for AI-agent grants: scoped authorization, budget-aware controls, human approval, destination policy, and signed execution receipts." />
   <title>Mandate — Authorization before execution</title>
   <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Source+Sans+3:wght@400;500;600;700&family=Source+Serif+4:opsz,wght@8..60,600&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="./styles.css" />
   <style>
     .mark{width:22px;height:22px;flex:none;display:block}
@@ -25,8 +27,7 @@
         <svg class="mark" viewBox="0 0 32 32" width="22" height="22" aria-hidden="true">
           <path d="M9 8v16M23 8v16M13 13h6v6h-6z" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square"/>
         </svg>
-        <span>Mandate</span>
-        <span class="ver">v0.2.1</span>
+        <span>Mandate</span><span class="ver">v0.2.1</span>
       </a>
       <nav class="links" id="nav-links">
         <a href="#diagram">Architecture</a>
@@ -50,33 +51,38 @@
           <p class="lead">Mandate sits in front of protected tools. An AI agent may propose an action. It does not execute until a signed, scoped, budget-aware grant has been verified.</p>
           <div class="actions">
             <a class="btn btn-solid" href="https://github.com/BEKO2210/mandate">View source</a>
-            <a class="btn btn-ghost" href="#diagram">See the architecture</a>
+            <a class="btn btn-ghost" href="#diagram">Watch the stages</a>
           </div>
         </div>
-        <aside class="hero-panel" aria-label="Product invariant">
-          <p class="panel-kicker">Invariant</p>
-          <p class="panel-rule">No valid authorization<br>= no upstream execution</p>
-          <ul class="panel-meta">
-            <li><span>71/71</span> verified tests</li>
-            <li><span>32 KiB</span> pre-buffer body cap</li>
-            <li><span>Fail-closed</span> destination policy</li>
-            <li><span>Signed</span> execution receipts</li>
-          </ul>
+        <aside class="stageboard" aria-label="Animated authorization flow">
+          <svg class="flow-svg" viewBox="0 0 560 420" role="img">
+            <defs><linearGradient id="wire" x1="0" x2="1"><stop stop-color="#c9b896"/><stop offset="1" stop-color="#ece8de"/></linearGradient></defs>
+            <path class="wire" d="M80 70 H280 V210 H480" fill="none" stroke="url(#wire)" stroke-width="1.5"/>
+            <path class="wire" d="M280 210 V340 H480" fill="none" stroke="url(#wire)" stroke-width="1.5"/>
+            <circle r="5" fill="#ece8de"><animateMotion dur="7s" repeatCount="indefinite" path="M80 70 H280 V210 H480"/></circle>
+            <g data-stage><rect x="24" y="42" width="132" height="56" fill="#1b1a17" stroke="#3d3a34"/><text x="90" y="66" text-anchor="middle" fill="#ece8de" font-size="13">Principal</text><text x="90" y="84" text-anchor="middle" fill="#8a8579" font-size="10">signed grant</text></g>
+            <g data-stage><rect x="214" y="42" width="132" height="56" fill="#1b1a17" stroke="#3d3a34"/><text x="280" y="66" text-anchor="middle" fill="#ece8de" font-size="13">Agent intent</text><text x="280" y="84" text-anchor="middle" fill="#8a8579" font-size="10">no target URL</text></g>
+            <g data-stage><rect x="196" y="182" width="168" height="64" fill="#22201c" stroke="#c9b896"/><text x="280" y="210" text-anchor="middle" fill="#ece8de" font-size="14">MANDATE</text><text x="280" y="228" text-anchor="middle" fill="#c9b896" font-size="10">evaluate · reserve · bind</text></g>
+            <g data-stage><rect x="214" y="312" width="132" height="56" fill="#1b1a17" stroke="#3d3a34"/><text x="280" y="336" text-anchor="middle" fill="#ece8de" font-size="13">Human step-up</text><text x="280" y="354" text-anchor="middle" fill="#8a8579" font-size="10">if required</text></g>
+            <g data-stage><rect x="404" y="182" width="132" height="56" fill="#1b1a17" stroke="#3d3a34"/><text x="470" y="206" text-anchor="middle" fill="#ece8de" font-size="13">Upstream</text><text x="470" y="224" text-anchor="middle" fill="#8a8579" font-size="10">registered route</text></g>
+            <g data-stage><rect x="404" y="312" width="132" height="56" fill="#1b1a17" stroke="#3d3a34"/><text x="470" y="336" text-anchor="middle" fill="#ece8de" font-size="13">Receipt</text><text x="470" y="354" text-anchor="middle" fill="#8a8579" font-size="10">signed result</text></g>
+          </svg>
+          <p class="stage-label" id="stage-label">Stage 01 · Principal signs a scoped grant</p>
         </aside>
       </div>
     </section>
-    <section class="viz" id="diagram" aria-label="Authorization architecture">
+    <section class="viz" id="diagram">
       <div class="wrap">
         <p class="kicker">Architecture</p>
-        <h2>What the gateway actually does.</h2>
-        <p class="section-lead">The agent never talks to the protected API directly. Mandate evaluates the grant, then a trusted connector is the only path upstream.</p>
+        <h2>Six stages. One enforcement boundary.</h2>
+        <p class="section-lead">The request moves through these stages in order. If any stage fails, the upstream connector is never reached.</p>
         <ol class="arch">
-          <li><span class="arch-id">01</span><strong>Principal</strong><em>signed grant</em></li>
-          <li><span class="arch-id">02</span><strong>Agent</strong><em>intent only</em></li>
-          <li class="arch-core"><span class="arch-id">03</span><strong>Mandate</strong><em>policy · budget · route</em></li>
-          <li><span class="arch-id">04</span><strong>Human</strong><em>if required</em></li>
-          <li><span class="arch-id">05</span><strong>Upstream</strong><em>registered route</em></li>
-          <li><span class="arch-id">06</span><strong>Receipt</strong><em>signed result</em></li>
+          <li data-stage class="rise"><span class="arch-id">01</span><strong>Principal</strong><em>signed grant</em></li>
+          <li data-stage class="rise"><span class="arch-id">02</span><strong>Agent</strong><em>intent only</em></li>
+          <li data-stage class="arch-core rise"><span class="arch-id">03</span><strong>Mandate</strong><em>policy · budget · route</em></li>
+          <li data-stage class="rise"><span class="arch-id">04</span><strong>Human</strong><em>if required</em></li>
+          <li data-stage class="rise"><span class="arch-id">05</span><strong>Upstream</strong><em>registered route</em></li>
+          <li data-stage class="rise"><span class="arch-id">06</span><strong>Receipt</strong><em>signed result</em></li>
         </ol>
         <p class="arch-note">No valid authorization → no upstream execution.</p>
       </div>
@@ -85,14 +91,14 @@
       <div class="wrap">
         <p class="kicker">Control plane</p>
         <h2>A state machine, not a suggestion.</h2>
-        <p class="section-lead">Every intent is checked against a signed grant, a server-side route registry, and an atomic ledger. Outcomes are explicit: authorized, denied, human-required, executed, failed, or unknown.</p>
-        <ol class="pipeline" aria-label="Mandate authorization pipeline">
+        <p class="section-lead">Every intent is checked against a signed grant, a server-side route registry, and an atomic ledger.</p>
+        <ol class="pipeline">
           <li><span class="step">01</span><strong>Principal</strong><span>Issues a signed grant with scope, time, and budget.</span></li>
-          <li><span class="step">02</span><strong>Agent intent</strong><span>Names an action. Cannot supply a URL, host, or network policy.</span></li>
+          <li><span class="step">02</span><strong>Agent intent</strong><span>Names an action. Cannot supply a URL or network policy.</span></li>
           <li><span class="step">03</span><strong>Mandate</strong><span>Verifies identity, grant, audience, nonce, budget, and destination.</span></li>
-          <li><span class="step">04</span><strong>Human step-up</strong><span>If required, approval revalidates the grant. It is not a shortcut.</span></li>
-          <li><span class="step">05</span><strong>Registered route</strong><span>Only the trusted connector may call the upstream. Redirects are not followed.</span></li>
-          <li><span class="step">06</span><strong>Signed receipt</strong><span>The result is recorded, including EXECUTION_UNKNOWN when the remote side is unclear.</span></li>
+          <li><span class="step">04</span><strong>Human step-up</strong><span>If required, approval revalidates the grant.</span></li>
+          <li><span class="step">05</span><strong>Registered route</strong><span>Only the trusted connector may call upstream.</span></li>
+          <li><span class="step">06</span><strong>Signed receipt</strong><span>The result is recorded, including EXECUTION_UNKNOWN.</span></li>
         </ol>
       </div>
     </section>
@@ -101,12 +107,12 @@
         <p class="kicker">Core guarantees</p>
         <h2>A narrow boundary with explicit invariants.</h2>
         <div class="facts">
-          <article><h3>Cryptographic grants</h3><p>Principal authorization is signed and independently verifiable. Agent claims are not authority.</p></article>
-          <article><h3>Atomic budget accounting</h3><p>Reserve, commit, and release live in the ledger. v0.2.1 binds spend to the authorization day.</p></article>
-          <article><h3>Human approval that revalidates</h3><p>Step-up does not skip evaluation. The grant is checked again before execution.</p></article>
-          <article><h3>Server-side destinations</h3><p>Routes come from a trusted registry. Public is the default. Private requires server-side opt-in.</p></article>
-          <article><h3>Uncertainty stays explicit</h3><p>A timeout becomes EXECUTION_UNKNOWN. The reservation is kept instead of guessed away.</p></article>
-          <article><h3>Signed execution receipts</h3><p>Outcomes are enforcer-signed objects for audit, not log lines that can drift.</p></article>
+          <article><h3>Cryptographic grants</h3><p>Principal authorization is signed and independently verifiable.</p></article>
+          <article><h3>Atomic budget accounting</h3><p>v0.2.1 binds spend to the authorization day.</p></article>
+          <article><h3>Human approval that revalidates</h3><p>Step-up does not skip evaluation.</p></article>
+          <article><h3>Server-side destinations</h3><p>Public is the default. Private requires server-side opt-in.</p></article>
+          <article><h3>Uncertainty stays explicit</h3><p>A timeout becomes EXECUTION_UNKNOWN.</p></article>
+          <article><h3>Signed execution receipts</h3><p>Outcomes are enforcer-signed objects for audit.</p></article>
         </div>
       </div>
     </section>
@@ -114,31 +120,23 @@
       <div class="wrap">
         <p class="kicker">Hardening status</p>
         <h2>Proven as behavior, not as copy.</h2>
-        <p class="section-lead">v0.2.1 was reproduced from a clean clone with 71 tests passing — zero failures, zero skips, zero xfails.</p>
+        <p class="section-lead">v0.2.1 was reproduced from a clean clone with 71 tests passing.</p>
         <div class="sec-grid">
           <div class="terminal">
             <div class="termbar">pytest · fresh clone</div>
             <pre><span class="muted">$</span> pytest -q
-<span class="muted">.......................................................................  [100%]</span>
 <span class="ok">71 passed</span>
 
 <span class="ok">SH-01 PASS</span>  Budget-day binding
-  authorization day remains authoritative across UTC midnight
-
 <span class="ok">SH-02 PASS</span>  Destination policy
-  public-by-default · private requires server-side opt-in
-  metadata / link-local destinations remain blocked
-
-<span class="ok">SH-03 PASS</span>  Request body limit
-  oversized bodies rejected before unbounded buffering
-  exactly one 413 response is emitted</pre>
+<span class="ok">SH-03 PASS</span>  Request body limit</pre>
           </div>
           <div class="status-list">
-            <article><header><strong>SH-01 Budget-day binding</strong><span class="tag tag-ok">Closed</span></header><p>Commit, release, unknown, and human-approved paths use the persisted authorization-day binding.</p></article>
-            <article><header><strong>SH-02 Destination policy</strong><span class="tag tag-ok">Closed</span></header><p>Public destinations are the default. Agent-controlled policy overrides are forbidden.</p></article>
-            <article><header><strong>SH-03 Body-limit protocol</strong><span class="tag tag-ok">Closed</span></header><p>Oversized payloads terminate at the ASGI boundary. Only a single 413 is written.</p></article>
-            <article><header><strong>HTTPS DNS TOCTOU</strong><span class="tag tag-note">Known limit</span></header><p>HTTPS still resolves by hostname for SNI and certificate validation. The TLS peer IP is not pinned.</p></article>
-            <article><header><strong>Legacy receipts</strong><span class="tag tag-note">Known limit</span></header><p>Receipts created before persisted budget bindings may fall back to an execution-day lookup.</p></article>
+            <article><header><strong>SH-01 Budget-day binding</strong><span class="tag tag-ok">Closed</span></header><p>Authorization-day binding persists across midnight.</p></article>
+            <article><header><strong>SH-02 Destination policy</strong><span class="tag tag-ok">Closed</span></header><p>Agent-controlled policy overrides are forbidden.</p></article>
+            <article><header><strong>SH-03 Body-limit protocol</strong><span class="tag tag-ok">Closed</span></header><p>Only a single 413 is written.</p></article>
+            <article><header><strong>HTTPS DNS TOCTOU</strong><span class="tag tag-note">Known limit</span></header><p>TLS peer IP is not pinned.</p></article>
+            <article><header><strong>Legacy receipts</strong><span class="tag tag-note">Known limit</span></header><p>Pre-binding receipts may fall back to execution-day lookup.</p></article>
           </div>
         </div>
       </div>
@@ -148,61 +146,22 @@
         <div>
           <p class="kicker">Developer surface</p>
           <h2>Small on purpose.</h2>
-          <p class="section-lead">The gateway exposes only what is required to submit intent, attach constrained approval, inspect receipts, and check health.</p>
           <ul class="endpoints">
-            <li><code>POST /v1/intents</code><span>Submit a signed agent intent for evaluation.</span></li>
-            <li><code>POST /v1/approvals</code><span>Attach human approval where policy requires it.</span></li>
-            <li><code>GET /v1/receipts/{id}</code><span>Read the signed authorization and execution receipt.</span></li>
+            <li><code>POST /v1/intents</code><span>Submit a signed agent intent.</span></li>
+            <li><code>POST /v1/approvals</code><span>Attach human approval when required.</span></li>
+            <li><code>GET /v1/receipts/{id}</code><span>Read the signed receipt.</span></li>
             <li><code>GET /health</code><span>Gateway health and enforcer identity.</span></li>
           </ul>
         </div>
         <div class="codebox">
-          <div class="codehead"><span>routes.py · trusted registry</span><button class="copy" type="button" data-copy>Copy</button></div>
+          <div class="codehead"><span>routes.py</span><button class="copy" type="button" data-copy>Copy</button></div>
           <pre id="snippet">Route(
   audience="mandate://procurement",
   base_url="https://api.example.com",
   methods=("POST",),
   paths=("/orders",),
   network_policy="public",
-)
-
-# Agent JSON cannot provide:
-# target_url / destination_url
-# host / base_url / proxy_url / url
-# network_policy</pre>
-        </div>
-      </div>
-    </section>
-    <section id="scope">
-      <div class="wrap">
-        <p class="kicker">Deliberate scope</p>
-        <h2>Not an identity stack. Not a payment network.</h2>
-        <p class="section-lead">Keeping the product narrow makes the security properties testable. Mandate is an enforcement gateway for AI-agent grants — nothing more is claimed in v0.2.1.</p>
-        <div class="scope-grid">
-          <article>
-            <h3>In v0.2.1</h3>
-            <ul>
-              <li>Signed grants and constraints</li>
-              <li>Nonce consumption</li>
-              <li>Daily budgets with day binding</li>
-              <li>Human approval with revalidation</li>
-              <li>Server-side route policy</li>
-              <li>Explicit execution states</li>
-              <li>Signed receipts and audit records</li>
-            </ul>
-          </article>
-          <article>
-            <h3>Not in v0.2.1</h3>
-            <ul>
-              <li>MCP or A2A adapters</li>
-              <li>EUDI / wallets</li>
-              <li>Subdelegation</li>
-              <li>Organization credentials</li>
-              <li>Marketplace flows</li>
-              <li>Payment-network behavior</li>
-              <li>A general-purpose UI</li>
-            </ul>
-          </article>
+)</pre>
         </div>
       </div>
     </section>
@@ -211,11 +170,10 @@
         <div>
           <p class="kicker">Next step</p>
           <h2>Give agents less implicit power.</h2>
-          <p>Make authority explicit, bounded, auditable, and verifiable before a protected action crosses the network boundary.</p>
+          <p>Make authority explicit before a protected action crosses the network boundary.</p>
         </div>
         <div class="actions">
           <a class="btn btn-solid" href="https://github.com/BEKO2210/mandate">Explore the source</a>
-          <a class="btn btn-ghost" href="https://github.com/BEKO2210/mandate/blob/main/docs/SECURITY_BACKLOG.md">Security backlog</a>
         </div>
       </div>
     </section>
