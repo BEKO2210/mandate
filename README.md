@@ -2,89 +2,29 @@
 
 **Identity + Permission + Transaction OS for AI agents.**
 
-Ein Agent darf nicht *so tun, als wäre er du*.
-Ein Agent braucht eine eigene Identität, eine nachvollziehbare Delegation und eine Quittung für jede Handlung.
+Art. 50 verlangt Transparenz darueber, dass eine Person mit KI interagiert.
+Mandate erweitert das um kryptografisch pruefbare Auftraggeber-, Delegations-
+und Handlungsvollmachten. Das verlangt Art. 50 nicht — das ist die Produktschicht.
 
-```
-Belkis
-  → autorisiert Agent ProcureBot
-  → für Aslani GmbH
-  → Aufgabe: Büro- und IT-Beschaffung
-  → maximal 5.000 €
-  → gültig bis Freitag
-```
+EUDI-Wallets sind ein moeglicher Traeger, kein heutiger Art.-50-Zwang.
 
-Genau das ist Version 1 von Mandate. Laufend. Signiert. Prüfbar.
+Der Pitch ist nicht „niemand hat Agent Identity gesehen“. Die Standardschlacht
+(OAuth/WIMSE, AIP-Drafts, MCP, A2A) laeuft. Mandate zielt auf die Runtime
+dazwischen: Enforcement, das Agenten ohne eigene Auth-Architektur nutzen.
 
-## Warum das jetzt gebaut werden muss
+## v0.1.1 Trust Core
 
-Stand September 2026:
+- Receipts werden vom **Enforcer** signiert, nicht vom Agenten
+- Private Keys verlassen den Prozess nicht (kein `private_hex` auf Disk)
+- `max_daily_amount` ist wirklich taeglich
+- Intent hat `audience` + `nonce` (Replay-Schutz)
+- `engine.approve(receipt_id, principal_key)` hebt ein HUMAN-Hold auf
+- `organization=` bleibt in 0.1.1 ein Label, kein Org-Nachweis
+- Subdelegation ist geplant, nicht implementiert
 
-- MCP verbindet Agenten mit Tools. A2A verbindet Agenten mit Agenten.
-- **Es gibt keinen ratifizierten Standard für Agenten-Identität.** IETF-Drafts sind Individual Submissions.
-- Seit 2. August 2026 verlangt Art. 50 AI Act: ein Agent muss offenlegen, *dass* er KI ist — und *in wessen Auftrag* er handelt.
-- EUDI-Wallets rollen 2026 aus.
-
-Mandate setzt in diese Lücke: Rechte, Identität, Delegation, Audit.
-
-## 30 Sekunden
+Ohne Gateway vor dem Tool kann ein Agent die Bibliothek noch umgehen.
+Als Naechstes: v0.2 Enforcement Gateway.
 
 ```bash
 python3 -m mandate demo
 ```
-
-1. Kopierpapier 120 € → ALLOW
-2. Workstation 3.200 € → HUMAN (Schwelle 2.500 €)
-3. GPU-Server 8.200 € → DENY
-4. Gehaltsüberweisung → DENY (falscher Scope)
-5. Gesperrter Lieferant → DENY
-
-## Bibliothek
-
-```python
-from datetime import timedelta
-from mandate import Engine, Constraint
-from mandate.crypto import utcnow
-
-engine = Engine()
-belkis, belkis_key = engine.register_principal("Belkis Aslani")
-agent, agent_key = engine.register_agent(
-    "ProcureBot", operator_did=belkis.did, developer="Mandate Labs", model="demo"
-)
-grant = engine.issue_grant(
-    belkis, belkis_key, agent,
-    organization="Aslani GmbH",
-    purpose="Beschaffung Q3",
-    scopes=["purchase.office", "purchase.it"],
-    not_after=utcnow() + timedelta(days=5),
-    constraints=Constraint(max_amount=5000, require_human_above=2500),
-)
-receipt = engine.propose(
-    agent_key, grant["id"],
-    action="purchase.office", amount=120, currency="EUR",
-    summary="Kopierpapier",
-)
-print(receipt["decision"])
-print(receipt["disclosure"]["human_readable"])
-```
-
-## Design
-
-1. Delegation, nicht Impersonation.
-2. Jeder Hop verengt Vollmacht.
-3. did:key + Ed25519, keine Registry nötig.
-4. Art. 50 / EUDI als Nachfrage, nicht nur Compliance.
-5. Modellunabhängig.
-
-## Roadmap
-
-| Version | Schicht |
-|---|---|
-| 0.1 | Identitäten, Grants, Policy, Receipts, Art. 50 |
-| 0.2 | HTTP-Gateway, MCP, A2A Agent Card |
-| 0.3 | Agent Payments, Step-up-Freigabe |
-| 0.4 | EUDI-Wallet-Bridge |
-| 0.5 | Marketplace + Haftpflicht |
-| 1.0 | Secure Element / lokaler Agent-Hub |
-
-Apache-2.0
