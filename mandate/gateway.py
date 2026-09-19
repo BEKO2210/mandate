@@ -9,7 +9,8 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from .engine import Engine, MandateError
-from .validate import MAX_BODY, ValidationError, reject_forbidden
+from .limits import BodyLimitMiddleware
+from .validate import ValidationError, reject_forbidden
 
 
 class IntentEnvelope(BaseModel):
@@ -25,24 +26,12 @@ class ApprovalEnvelope(BaseModel):
 
 
 def create_app(engine: Engine) -> FastAPI:
-    app = FastAPI(title="Mandate Enforcement Gateway", version="0.2.0")
+    app = FastAPI(title="Mandate Enforcement Gateway", version="0.2.1")
     app.state.engine = engine
-
-    @app.middleware("http")
-    async def limit_body(request: Request, call_next):
-        body = await request.body()
-        if len(body) > MAX_BODY:
-            return JSONResponse({"error": "payload too large"}, status_code=413)
-
-        async def receive():
-            return {"type": "http.request", "body": body, "more_body": False}
-
-        request = Request(request.scope, receive)
-        return await call_next(request)
 
     @app.get("/health")
     def health():
-        return {"ok": True, "enforcer_did": engine.enforcer_did, "version": "0.2.0"}
+        return {"ok": True, "enforcer_did": engine.enforcer_did, "version": "0.2.1"}
 
     @app.post("/v1/intents")
     def post_intent(env: IntentEnvelope):
@@ -99,4 +88,4 @@ def create_app(engine: Engine) -> FastAPI:
             raise HTTPException(404, "unknown receipt")
         return rec
 
-    return app
+    return BodyLimitMiddleware(app)
