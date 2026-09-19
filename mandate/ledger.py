@@ -276,9 +276,20 @@ class _Tx:
         return dict(row) if row else None
 
     def put_execution(self, execution_id: str, receipt_id: str, idem: str, state: str, body: dict | None) -> None:
+        prior_r = self.get_execution_by_receipt(receipt_id)
+        if prior_r and prior_r["id"] != execution_id:
+            raise sqlite3.IntegrityError("receipt already claimed")
+        prior_i = self.get_execution_by_idem(idem)
+        if prior_i and prior_i["id"] != execution_id:
+            raise sqlite3.IntegrityError("idempotency key reused")
         self.l._conn.execute(
-            """INSERT OR REPLACE INTO executions(id, receipt_id, idempotency_key, state, body)
-               VALUES (?,?,?,?,?)""",
+            """INSERT INTO executions(id, receipt_id, idempotency_key, state, body)
+               VALUES (?,?,?,?,?)
+               ON CONFLICT(id) DO UPDATE SET
+                 state=excluded.state,
+                 body=excluded.body
+               WHERE executions.receipt_id=excluded.receipt_id
+                 AND executions.idempotency_key=excluded.idempotency_key""",
             (execution_id, receipt_id, idem, state, json.dumps(body) if body else None),
         )
 
