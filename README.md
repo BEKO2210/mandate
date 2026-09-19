@@ -1,30 +1,27 @@
-# Mandate
+# Mandate v0.2
 
-**Identity + Permission + Transaction OS for AI agents.**
+Enforcement gateway for AI-agent grants.
 
-Art. 50 verlangt Transparenz darueber, dass eine Person mit KI interagiert.
-Mandate erweitert das um kryptografisch pruefbare Auftraggeber-, Delegations-
-und Handlungsvollmachten. Das verlangt Art. 50 nicht — das ist die Produktschicht.
+An agent cannot call a protected upstream unless the gateway has a currently valid principal authorization.
 
-EUDI-Wallets sind ein moeglicher Traeger, kein heutiger Art.-50-Zwang.
+## What v0.2 does
 
-Der Pitch ist nicht „niemand hat Agent Identity gesehen“. Die Standardschlacht
-(OAuth/WIMSE, AIP-Drafts, MCP, A2A) laeuft. Mandate zielt auf die Runtime
-dazwischen: Enforcement, das Agenten ohne eigene Auth-Architektur nutzen.
+- Persistent enforcer identity via KeyProvider (keys outside the object store)
+- SQLite ledger with atomic nonce consume and budget reservation
+- State machine with revalidating human approval
+- Approval never jumps to EXECUTED
+- Server-side route registry — no client target URL
+- Redirects are not followed
+- Enforcer-signed execution receipts
 
-## v0.1.1 Trust Core
+## What v0.2 does not do
 
-- Receipts werden vom **Enforcer** signiert, nicht vom Agenten
-- Private Keys verlassen den Prozess nicht (kein `private_hex` auf Disk)
-- `max_daily_amount` ist wirklich taeglich
-- Intent hat `audience` + `nonce` (Replay-Schutz)
-- `engine.approve(receipt_id, principal_key)` hebt ein HUMAN-Hold auf
-- `organization=` bleibt in 0.1.1 ein Label, kein Org-Nachweis
-- Subdelegation ist geplant, nicht implementiert
+MCP, A2A, EUDI, wallets, UI, subdelegation, organization credentials, marketplace, payments, perfect exactly-once HTTP.
 
-Ohne Gateway vor dem Tool kann ein Agent die Bibliothek noch umgehen.
-Als Naechstes: v0.2 Enforcement Gateway.
+On timeout the state is EXECUTION_UNKNOWN and the reservation is kept.
 
 ```bash
-python3 -m mandate demo
+python3 -m pytest tests/ -q
 ```
+
+Gateway: GET /health, POST /v1/intents, POST /v1/approvals, GET /v1/receipts/{id}

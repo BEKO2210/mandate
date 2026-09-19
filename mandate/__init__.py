@@ -5,7 +5,7 @@ from .engine import Engine
 from .models import AgentCard, Constraint, Grant, Intent, Principal
 from .policy import evaluate
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 __all__ = [
     "Engine",
     "KeyPair",
