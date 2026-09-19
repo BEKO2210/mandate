@@ -27,6 +27,8 @@ FORBIDDEN_KEYS = frozenset(
         "url",
         "upstream",
         "redirect_url",
+        "network_policy",
+        "allow_private",
     }
 )
 
