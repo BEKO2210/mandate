@@ -28,6 +28,7 @@ class Ledger:
         self._conn.execute("PRAGMA foreign_keys=ON")
         self._conn.execute("PRAGMA busy_timeout=5000")
         self._init()
+        self._migrate()
 
     def inject_failure(self, on: bool = True) -> None:
         self._fail = on
@@ -103,6 +104,22 @@ class Ledger:
               event TEXT NOT NULL,
               correlation_id TEXT,
               payload TEXT NOT NULL
+            );
+            """
+        )
+
+    def _migrate(self) -> None:
+        cols = {row[1] for row in self._conn.execute("PRAGMA table_info(receipts)")}
+        if "budget_day" not in cols:
+            self._conn.execute("ALTER TABLE receipts ADD COLUMN budget_day TEXT")
+        self._conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS budget_bindings (
+              receipt_id TEXT PRIMARY KEY,
+              grant_id TEXT NOT NULL,
+              currency TEXT NOT NULL,
+              day TEXT NOT NULL,
+              amount REAL NOT NULL
             );
             """
         )
@@ -216,15 +233,39 @@ class _Tx:
     def insert_receipt(self, rec: dict) -> None:
         self.l._conn.execute(
             """INSERT INTO receipts(id, grant_id, agent_did, principal_did, audience, nonce,
-               action, amount, currency, state, execution_id, body)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+               action, amount, currency, state, execution_id, body, budget_day)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (
                 rec["id"], rec["grant_id"], rec["agent_did"], rec["principal_did"],
                 rec["audience"], rec["nonce"], rec["action"], rec.get("amount"),
                 rec.get("currency"), rec["state"], rec.get("execution_id"),
-                json.dumps(rec["body"]),
+                json.dumps(rec["body"]), rec.get("budget_day"),
             ),
         )
+
+    def put_budget_binding(
+        self, receipt_id: str, grant_id: str, currency: str, day: str, amount: float
+    ) -> None:
+        self.l._conn.execute(
+            """INSERT OR REPLACE INTO budget_bindings(receipt_id, grant_id, currency, day, amount)
+               VALUES (?,?,?,?,?)""",
+            (receipt_id, grant_id, currency, day, float(amount or 0)),
+        )
+
+    def get_budget_binding(self, receipt_id: str) -> dict | None:
+        row = self.l._conn.execute(
+            "SELECT * FROM budget_bindings WHERE receipt_id=?", (receipt_id,)
+        ).fetchone()
+        return dict(row) if row else None
+
+    def budget_snapshot(self, grant_id: str, currency: str, day: str) -> dict[str, float]:
+        row = self.l._conn.execute(
+            "SELECT reserved, committed FROM budget WHERE grant_id=? AND currency=? AND day=?",
+            (grant_id, currency, day),
+        ).fetchone()
+        if not row:
+            return {"reserved": 0.0, "committed": 0.0}
+        return {"reserved": float(row["reserved"]), "committed": float(row["committed"])}
 
     def get_receipt(self, receipt_id: str) -> dict | None:
         row = self.l._conn.execute("SELECT * FROM receipts WHERE id=?", (receipt_id,)).fetchone()
@@ -245,6 +286,9 @@ class _Tx:
                 (dst, json.dumps(body), receipt_id, src),
             )
         return cur.rowcount == 1
+
+    def set_receipt_budget_day(self, receipt_id: str, day: str) -> None:
+        self.l._conn.execute("UPDATE receipts SET budget_day=? WHERE id=?", (day, receipt_id))
 
     def set_execution(self, receipt_id: str, execution_id: str) -> None:
         self.l._conn.execute(
