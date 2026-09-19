@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from typing import Any
+from uuid import uuid4
 
 from . import disclosure as disc
 from .crypto import KeyPair, sign_object, verify_object
@@ -15,20 +16,22 @@ class MandateError(Exception):
 
 
 class Engine:
-    def __init__(self, store: Store | None = None) -> None:
+    def __init__(self, store: Store | None = None, enforcer: KeyPair | None = None) -> None:
         self.store = store or Store()
+        self.enforcer = enforcer or KeyPair.generate()
+        self.enforcer_did = self.enforcer.did()
 
     def register_principal(self, name: str, kind: str = "person", jurisdiction: str = "DE"):
         kp = KeyPair.generate()
         p = Principal(did=kp.did(), kind=kind, name=name, jurisdiction=jurisdiction)
-        self.store.put_principal(p, kp)
+        self.store.put_principal(p)
         return p, kp
 
-    def register_agent(self, name: str, operator_did: str, developer: str, model: str, skills=None):
+    def register_agent(self, name, operator_did, developer, model, skills=None):
         kp = KeyPair.generate()
         card = AgentCard(did=kp.did(), name=name, operator_did=operator_did, developer=developer, model=model, skills=skills or [])
         signed = sign_object(kp, card.to_dict())
-        self.store.put_agent(card, kp, signed)
+        self.store.put_agent(card, signed)
         return card, kp
 
     def issue_grant(self, principal, principal_kp, agent, organization, purpose, scopes, not_after, constraints=None, not_before=None):
@@ -39,7 +42,7 @@ class Engine:
         self.store.put_grant(signed)
         return signed
 
-    def revoke_grant(self, grant_id: str, principal_kp: KeyPair):
+    def revoke_grant(self, grant_id, principal_kp):
         g = self.store.get_grant(grant_id)
         if not g:
             raise MandateError("unknown grant")
@@ -51,15 +54,19 @@ class Engine:
         self.store.put_grant(signed)
         return signed
 
-    def propose(self, agent_kp: KeyPair, grant_id: str, action: str, **kwargs: Any):
+    def propose(self, agent_kp, grant_id, action, **kwargs):
         grant_doc = self.store.get_grant(grant_id)
         if not grant_doc:
             raise MandateError("unknown grant")
         if not verify_object(grant_doc, expected_did=grant_doc["principal_did"]):
             raise MandateError("grant signature invalid")
         grant = _grant_from_doc(grant_doc)
-        intent = Intent.create(agent_kp.did(), grant_id, action, **kwargs)
+        kwargs.setdefault("audience", "mandate://local")
+        kwargs.setdefault("nonce", uuid4().hex)
+        intent = Intent.create(agent_did=agent_kp.did(), grant_id=grant_id, action=action, **kwargs)
         signed_intent = sign_object(agent_kp, intent.to_dict())
+        if not self.store.consume_nonce(intent.nonce, intent.audience):
+            raise MandateError("replay: nonce already used for this audience")
         spent = self.store.spent_today(grant_id, intent.currency)
         decision = evaluate(grant, intent, spent_today=spent)
         agent = self.store.get_agent(agent_kp.did())
@@ -72,11 +79,33 @@ class Engine:
             agent_did=agent.did, principal_did=grant.principal_did,
             disclosure=disclosure, outcome=outcome,
         )
-        signed_receipt = sign_object(agent_kp, receipt.to_dict())
+        signed_receipt = sign_object(self.enforcer, receipt.to_dict())
         self.store.put_receipt(signed_receipt)
         if decision.allowed and intent.amount:
             self.store.add_spend(grant_id, intent.currency, intent.amount)
         return signed_receipt
+
+    def approve(self, receipt_id, principal_kp):
+        receipt = self.store.get_receipt(receipt_id)
+        if not receipt:
+            raise MandateError("unknown receipt")
+        if receipt["principal_did"] != principal_kp.did():
+            raise MandateError("only the grant principal can approve")
+        if not receipt["decision"].get("requires_human"):
+            raise MandateError("receipt is not waiting for human approval")
+        if not verify_object(receipt, expected_did=self.enforcer_did):
+            raise MandateError("receipt was not signed by this enforcer")
+        approval = sign_object(principal_kp, {"type": "MandateApproval", "receipt_id": receipt_id, "grant_id": receipt["grant_id"], "intent_id": receipt["intent"]["id"]})
+        body = {k: v for k, v in receipt.items() if k != "proof"}
+        body["decision"] = {**body["decision"], "allowed": True, "requires_human": False, "reasons": ["human approved"], "approval": approval}
+        body["outcome"] = "executed"
+        amount = body["intent"].get("amount")
+        currency = body["intent"].get("currency") or "EUR"
+        if amount:
+            self.store.add_spend(body["grant_id"], currency, float(amount))
+        signed = sign_object(self.enforcer, body)
+        self.store.put_receipt(signed)
+        return signed
 
 
 def _grant_from_doc(doc):
