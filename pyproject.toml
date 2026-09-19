@@ -1,0 +1,19 @@
+[project]
+name = "mandate"
+version = "0.1.0"
+description = "Identity + Permission + Transaction OS for AI agents"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "Apache-2.0" }
+authors = [{ name = "Belkis Aslani" }, { name = "Mandate Labs" }]
+dependencies = ["cryptography>=41"]
+
+[project.scripts]
+mandate = "mandate.cli:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["mandate*"]
