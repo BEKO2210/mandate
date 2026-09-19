@@ -6,3 +6,7 @@ __pycache__/
 dist/
 *.egg-info/
 .pytest_cache/
+*.sqlite
+*.sqlite-*
+enforcer-keys/
+.env
