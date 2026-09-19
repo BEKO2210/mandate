@@ -2,47 +2,29 @@
 
 This file tracks narrowly scoped follow-ups discovered during independent review of the remotely reproducible v0.2 Golden tree.
 
-## SH-01 — Budget reservation day must be stable
+## SH-01 — Budget reservation day must be stable — DONE in v0.2.1
 
-Current authorization reserves against the UTC day returned by `_day()`, while later commit/release during execution calls `_day()` again.
+Authorization now records a `budget_bindings` row (receipt_id, grant_id, currency, day, amount) at reserve time. Commit, release, and EXECUTION_UNKNOWN handling use that bound day. Engine clock is injectable for tests; production uses UTC `utcnow()`.
 
-A request authorized before UTC midnight and executed after midnight can therefore mutate a different budget row than the one originally reserved.
+Covered by G41–G44.
 
-Required property:
+## SH-02 — Route destination resolution policy — DONE in v0.2.1
 
-> The budget window selected at authorization must remain bound to that authorization through commit, release, or EXECUTION_UNKNOWN handling.
+`Route.network_policy` defaults to `"public"`. Loopback/RFC1918 require explicit server-side `"allow_private"`. Metadata hosts and link-local addresses stay blocked even under `allow_private`. Hostnames are resolved with `getaddrinfo`; any blocked address fails closed.
 
-Acceptance test: authorize before UTC midnight, execute after midnight, and prove the original reservation is committed/released exactly once with no stranded or negative accounting.
+HTTP connections pin the first allowed IP and send the original Host header. HTTPS keeps the hostname for SNI/certificate checks and therefore retains a DNS TOCTOU residual between check and connect.
 
-## SH-02 — Route destination resolution policy
+Covered by G45–G52.
 
-`mandate/executor.py` defines `_host_blocked()`, but `assert_safe_destination()` does not currently enforce it.
+## SH-03 — Request body limit before buffering — DONE in v0.2.1
 
-The server-side RouteRegistry prevents client-supplied target URLs, but explicit policy is still needed for:
+`BodyLimitMiddleware` rejects `Content-Length > MAX_BODY` without reading the body. Chunked/missing-length bodies are counted as they arrive and abort at `MAX_BODY + 1`.
 
-- loopback
-- RFC1918/private ranges
-- link-local
-- cloud metadata destinations
-- multicast/reserved/unspecified addresses
-- hostname resolution that returns blocked addresses
+Covered by G53–G57.
 
-Test/dev loopback must require an explicit server-side opt-in; it must never be inferred from agent input.
+## Residual / next
 
-Any residual DNS time-of-check/time-of-use limitation must be documented honestly.
-
-## SH-03 — Request body limit before buffering
-
-The FastAPI middleware currently calls `await request.body()` and only then compares the buffered size to `MAX_BODY`.
-
-Required property:
-
-> Oversized requests must be rejected without first buffering an unbounded body in application memory.
-
-Implement a bounded ASGI receive path or equivalent mechanism and test both Content-Length-known and chunked/streamed oversized requests.
-
-## Scope
-
-Do not add MCP, A2A, EUDI, subdelegation, UI, marketplace, or payment-network work in this hardening round.
-
-All existing G01-G40 tests must remain unchanged and green. New regressions should extend the suite rather than weaken existing gates.
+- HTTPS DNS TOCTOU (check then connect by name)
+- No connection-level IP pin for TLS
+- IPv4-mapped addresses are unwrapped before policy checks
+- Do not add MCP, A2A, EUDI, subdelegation, UI, marketplace, or payment-network work in this hardening round
