@@ -71,14 +71,9 @@ class Grant:
     def create(cls, principal_did, agent_did, organization, purpose, scopes, not_after, constraints=None, not_before=None):
         nb = not_before or utcnow()
         return cls(
-            id=new_id("grant"),
-            principal_did=principal_did,
-            agent_did=agent_did,
-            organization=organization,
-            purpose=purpose,
-            scopes=scopes,
-            not_before=iso(nb),
-            not_after=iso(not_after),
+            id=new_id("grant"), principal_did=principal_did, agent_did=agent_did,
+            organization=organization, purpose=purpose, scopes=scopes,
+            not_before=iso(nb), not_after=iso(not_after),
             constraints=(constraints or Constraint()).to_dict(),
         )
 
@@ -96,6 +91,8 @@ class Intent:
     currency: str = "EUR"
     counterparty: str | None = None
     summary: str = ""
+    audience: str = "mandate://local"
+    nonce: str = ""
     context: dict[str, Any] = field(default_factory=dict)
     created_at: str = field(default_factory=lambda: iso(utcnow()))
 
