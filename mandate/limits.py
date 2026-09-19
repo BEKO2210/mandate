@@ -40,28 +40,33 @@ class BodyLimitMiddleware:
 
         seen = 0
         overflow = False
-        responded = False
+        downstream_started = False
+        limit_response_sent = False
 
         async def safe_send(message):
-            nonlocal responded
-            if overflow and not responded:
+            nonlocal downstream_started
+            # Once the middleware has emitted its own 413, any response the
+            # downstream framework tries to send after seeing http.disconnect
+            # must be suppressed. ASGI permits only one response start.
+            if limit_response_sent:
                 return
             if message.get("type") == "http.response.start":
-                responded = True
+                downstream_started = True
             await send(message)
 
         async def bounded_receive():
-            nonlocal seen, overflow, responded
+            nonlocal seen, overflow, limit_response_sent
             if overflow:
                 return {"type": "http.disconnect"}
+
             message = await receive()
             if message.get("type") == "http.request":
                 chunk = message.get("body") or b""
                 seen += len(chunk)
                 if seen > self.max_body:
                     overflow = True
-                    if not responded:
-                        responded = True
+                    if not downstream_started and not limit_response_sent:
+                        limit_response_sent = True
                         await _send_413(send)
                     return {"type": "http.disconnect"}
             return message
@@ -69,12 +74,14 @@ class BodyLimitMiddleware:
         try:
             await self.app(scope, bounded_receive, safe_send)
         except BodyTooLarge:
-            if not responded:
+            if not downstream_started and not limit_response_sent:
+                limit_response_sent = True
                 await _send_413(send)
         except Exception:
             if overflow:
-                if not responded:
-                    await _send_413(send)
+                # If the 413 was already emitted, the overflow path is complete.
+                # Otherwise the downstream response had already started and we
+                # cannot legally replace it with a second response start.
                 return
             raise
 
