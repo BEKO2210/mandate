@@ -1,0 +1,274 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="theme-color" content="#080b10" />
+  <meta name="description" content="Mandate is an enforcement gateway for AI-agent grants: scoped authorization, budget controls, human approval, destination policy, and signed execution receipts." />
+  <title>Mandate — Authorization before execution</title>
+  <style>
+    :root{
+      --bg:#080b10;--panel:#0e131b;--panel2:#111923;--text:#f3f7fb;--muted:#99a8ba;
+      --line:#1e2b3a;--accent:#79f2c0;--accent2:#7aa7ff;--warn:#ffcc66;--max:1160px;
+    }
+    *{box-sizing:border-box}
+    html{scroll-behavior:smooth}
+    body{margin:0;background:
+      radial-gradient(900px 520px at 80% -5%,rgba(122,167,255,.13),transparent 60%),
+      radial-gradient(760px 480px at 10% 15%,rgba(121,242,192,.08),transparent 60%),var(--bg);
+      color:var(--text);font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+      line-height:1.6}
+    a{color:inherit;text-decoration:none}
+    code,pre{font-family:"SFMono-Regular",Consolas,"Liberation Mono",monospace}
+    .wrap{width:min(calc(100% - 36px),var(--max));margin:auto}
+    nav{position:sticky;top:0;z-index:20;background:rgba(8,11,16,.76);backdrop-filter:blur(18px);border-bottom:1px solid rgba(255,255,255,.06)}
+    .nav{height:70px;display:flex;align-items:center;justify-content:space-between;gap:24px}
+    .brand{display:flex;align-items:center;gap:11px;font-weight:760;letter-spacing:-.02em}
+    .mark{width:34px;height:34px;border:1px solid #29435a;border-radius:10px;display:grid;place-items:center;background:linear-gradient(145deg,#111b25,#0b1118);box-shadow:inset 0 0 0 1px rgba(255,255,255,.025)}
+    .mark svg{width:20px;height:20px}
+    .navlinks{display:flex;gap:22px;align-items:center;color:var(--muted);font-size:14px}
+    .navlinks a:hover{color:var(--text)}
+    .btn{display:inline-flex;align-items:center;justify-content:center;gap:9px;border:1px solid var(--line);border-radius:12px;padding:11px 16px;font-weight:700;font-size:14px;transition:.2s ease;background:#0c1219}
+    .btn:hover{transform:translateY(-1px);border-color:#38506a}
+    .btn.primary{background:var(--accent);color:#06100c;border-color:var(--accent)}
+    .hero{padding:112px 0 78px}
+    .eyebrow{display:inline-flex;align-items:center;gap:9px;border:1px solid #23433a;background:rgba(121,242,192,.06);color:#bdf8dc;border-radius:999px;padding:7px 11px;font-size:12px;font-weight:750;letter-spacing:.06em;text-transform:uppercase}
+    .dot{width:7px;height:7px;border-radius:50%;background:var(--accent);box-shadow:0 0 18px var(--accent)}
+    h1{font-size:clamp(48px,8vw,94px);line-height:.98;letter-spacing:-.06em;margin:26px 0 26px;max-width:950px}
+    .gradient{background:linear-gradient(100deg,#fff 20%,#a7f5d5 55%,#8eb3ff);-webkit-background-clip:text;background-clip:text;color:transparent}
+    .lead{font-size:clamp(18px,2vw,23px);color:#b2c0cf;max-width:800px;margin:0 0 32px}
+    .actions{display:flex;gap:12px;flex-wrap:wrap}
+    .proof{margin-top:48px;display:grid;grid-template-columns:repeat(4,1fr);border:1px solid var(--line);border-radius:18px;overflow:hidden;background:rgba(14,19,27,.74)}
+    .proof div{padding:22px;border-right:1px solid var(--line)}
+    .proof div:last-child{border-right:0}
+    .proof strong{display:block;font-size:24px;letter-spacing:-.03em}
+    .proof span{font-size:13px;color:var(--muted)}
+    section{padding:84px 0}
+    .section-kicker{font-size:12px;text-transform:uppercase;letter-spacing:.14em;color:var(--accent);font-weight:800}
+    h2{font-size:clamp(34px,5vw,56px);line-height:1.05;letter-spacing:-.045em;margin:12px 0 18px}
+    .section-lead{max-width:720px;color:var(--muted);font-size:18px;margin-bottom:36px}
+    .grid{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
+    .card{background:linear-gradient(180deg,rgba(17,25,35,.92),rgba(12,18,25,.92));border:1px solid var(--line);border-radius:18px;padding:24px;min-height:190px}
+    .card h3{font-size:18px;margin:12px 0 8px;letter-spacing:-.02em}
+    .card p{margin:0;color:var(--muted);font-size:14px}
+    .icon{width:38px;height:38px;border-radius:11px;border:1px solid #2d4354;display:grid;place-items:center;color:var(--accent);background:#0b1219;font-weight:800}
+    .flow{display:grid;grid-template-columns:repeat(7,1fr);align-items:center;gap:9px;margin-top:34px}
+    .node{min-height:104px;border:1px solid var(--line);border-radius:15px;background:var(--panel);padding:14px;display:flex;flex-direction:column;justify-content:center}
+    .node b{font-size:14px}.node span{font-size:11px;color:var(--muted);margin-top:4px}
+    .arrow{text-align:center;color:#536579;font-size:20px}
+    .security{display:grid;grid-template-columns:1.25fr .75fr;gap:16px}
+    .terminal{border:1px solid var(--line);border-radius:18px;background:#070a0f;overflow:hidden}
+    .termbar{height:43px;border-bottom:1px solid #192431;display:flex;align-items:center;gap:7px;padding:0 15px}
+    .termbar i{width:8px;height:8px;border-radius:50%;background:#344252}
+    pre{margin:0;padding:24px;overflow:auto;color:#c9d5e2;font-size:13px;line-height:1.75}
+    .ok{color:var(--accent)} .warn{color:var(--warn)} .blue{color:#9ab8ff}
+    .status{display:grid;gap:12px}
+    .status .item{border:1px solid var(--line);background:var(--panel);border-radius:15px;padding:17px}
+    .item .top{display:flex;justify-content:space-between;gap:12px;align-items:center}
+    .badge{font-size:10px;letter-spacing:.08em;text-transform:uppercase;border-radius:99px;padding:5px 8px;font-weight:800}
+    .done{color:#baf8d9;background:rgba(121,242,192,.09);border:1px solid #285344}
+    .known{color:#ffe2a2;background:rgba(255,204,102,.08);border:1px solid #5c4b25}
+    .item p{margin:7px 0 0;color:var(--muted);font-size:13px}
+    .split{display:grid;grid-template-columns:1fr 1fr;gap:20px}
+    .codebox{border:1px solid var(--line);border-radius:18px;background:#080c12;overflow:hidden}
+    .codehead{display:flex;justify-content:space-between;align-items:center;padding:12px 16px;border-bottom:1px solid var(--line);font-size:12px;color:var(--muted)}
+    .copy{border:0;background:transparent;color:#aebdcd;cursor:pointer;font:inherit}
+    .narrow{padding:0;margin:0;list-style:none;display:grid;gap:12px}
+    .narrow li{border-bottom:1px solid var(--line);padding:0 0 12px;color:#c2ceda}
+    .narrow span{display:block;color:var(--muted);font-size:13px;margin-top:3px}
+    .cta{border:1px solid #29443b;border-radius:24px;padding:48px;background:radial-gradient(600px 260px at 25% 0%,rgba(121,242,192,.12),transparent 70%),var(--panel);display:flex;justify-content:space-between;gap:28px;align-items:center}
+    .cta h2{margin:0 0 9px;font-size:clamp(30px,4vw,48px)}
+    .cta p{margin:0;color:var(--muted);max-width:650px}
+    footer{border-top:1px solid var(--line);padding:30px 0 46px;color:var(--muted);font-size:13px}
+    .footer{display:flex;justify-content:space-between;gap:20px;flex-wrap:wrap}
+    @media(max-width:900px){
+      .grid{grid-template-columns:1fr 1fr}.proof{grid-template-columns:1fr 1fr}.proof div:nth-child(2){border-right:0}.proof div:nth-child(-n+2){border-bottom:1px solid var(--line)}
+      .flow{grid-template-columns:1fr}.arrow{transform:rotate(90deg)}.security,.split{grid-template-columns:1fr}
+    }
+    @media(max-width:620px){
+      .hero{padding-top:74px}.grid{grid-template-columns:1fr}.proof{grid-template-columns:1fr}.proof div{border-right:0!important;border-bottom:1px solid var(--line)!important}.proof div:last-child{border-bottom:0!important}
+      .navlinks a:not(.btn){display:none}.cta{padding:30px;align-items:flex-start;flex-direction:column}
+    }
+    @media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}.btn{transition:none}}
+  </style>
+</head>
+<body>
+<nav>
+  <div class="wrap nav">
+    <a class="brand" href="#top" aria-label="Mandate home">
+      <span class="mark" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none"><path d="M5 18V6l7 7 7-7v12" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </span>
+      Mandate <span style="color:#667789;font-weight:600">v0.2.1</span>
+    </a>
+    <div class="navlinks">
+      <a href="#how">How it works</a>
+      <a href="#security">Security</a>
+      <a href="#scope">Scope</a>
+      <a class="btn" href="https://github.com/BEKO2210/mandate">GitHub ↗</a>
+    </div>
+  </div>
+</nav>
+
+<main id="top">
+  <header class="hero">
+    <div class="wrap">
+      <div class="eyebrow"><span class="dot"></span> Security hardening v0.2.1 · 71/71 tests</div>
+      <h1>Authorization <span class="gradient">before execution.</span></h1>
+      <p class="lead">Mandate is an enforcement gateway for AI agents. It converts principal intent into scoped, auditable, budget-aware authority before a protected upstream call is allowed to happen.</p>
+      <div class="actions">
+        <a class="btn primary" href="https://github.com/BEKO2210/mandate">View source on GitHub ↗</a>
+        <a class="btn" href="https://github.com/BEKO2210/mandate/blob/main/docs/THREAT_MODEL.md">Read the threat model</a>
+      </div>
+      <div class="proof" aria-label="Project proof points">
+        <div><strong>71/71</strong><span>verified tests passing</span></div>
+        <div><strong>32 KiB</strong><span>pre-buffer request limit</span></div>
+        <div><strong>Signed</strong><span>execution receipts</span></div>
+        <div><strong>Fail closed</strong><span>destination policy</span></div>
+      </div>
+    </div>
+  </header>
+
+  <section id="how">
+    <div class="wrap">
+      <div class="section-kicker">The control plane</div>
+      <h2>Agents can propose. Mandate decides what may execute.</h2>
+      <p class="section-lead">A principal issues a cryptographically signed grant. Every agent intent is checked against scope, audience, time, amount, daily budget, approval requirements, nonce state, and the server-side route registry.</p>
+      <div class="flow" aria-label="Mandate execution flow">
+        <div class="node"><b>Principal</b><span>defines authority</span></div><div class="arrow">→</div>
+        <div class="node"><b>Signed grant</b><span>scope + constraints</span></div><div class="arrow">→</div>
+        <div class="node"><b>Agent intent</b><span>requested action</span></div><div class="arrow">→</div>
+        <div class="node"><b>Mandate</b><span>policy + budget + route</span></div>
+      </div>
+      <div class="flow" style="margin-top:9px" aria-label="Mandate result flow">
+        <div class="node"><b>Human approval</b><span>when threshold requires it</span></div><div class="arrow">→</div>
+        <div class="node"><b>Protected upstream</b><span>registered route only</span></div><div class="arrow">→</div>
+        <div class="node"><b>Execution state</b><span>success / fail / unknown</span></div><div class="arrow">→</div>
+        <div class="node"><b>Signed receipt</b><span>auditable result</span></div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="wrap">
+      <div class="section-kicker">Core guarantees</div>
+      <h2>A narrow enforcement boundary with explicit invariants.</h2>
+      <div class="grid">
+        <article class="card"><div class="icon">01</div><h3>Cryptographic grants</h3><p>Principal authorization is signed and independently verifiable. Agent-provided claims do not become authority by themselves.</p></article>
+        <article class="card"><div class="icon">02</div><h3>Atomic budget accounting</h3><p>Reservation and commit/release operations live in the SQLite transaction layer. v0.2.1 binds spend to the authorization day.</p></article>
+        <article class="card"><div class="icon">03</div><h3>Human approval that revalidates</h3><p>Approval is not an execution shortcut. The grant is re-evaluated and the state machine preserves the authorization boundary.</p></article>
+        <article class="card"><div class="icon">04</div><h3>Server-side destinations</h3><p>Agents cannot supply target URLs or override network policy. Routes come from a trusted registry and redirects are not followed.</p></article>
+        <article class="card"><div class="icon">05</div><h3>Execution uncertainty is explicit</h3><p>A timeout becomes EXECUTION_UNKNOWN. Mandate keeps the reservation instead of pretending the remote side definitely failed.</p></article>
+        <article class="card"><div class="icon">06</div><h3>Signed execution receipts</h3><p>Outcomes are recorded as enforcer-signed receipts, giving downstream systems a durable object for audit and verification.</p></article>
+      </div>
+    </div>
+  </section>
+
+  <section id="security">
+    <div class="wrap">
+      <div class="section-kicker">Security posture</div>
+      <h2>Hardening is tested as behavior, not marketing.</h2>
+      <p class="section-lead">The v0.2.1 branch was reproduced from a clean clone with 71 tests passing, zero failures, zero skips, and zero xfails before merge to main.</p>
+      <div class="security">
+        <div class="terminal" aria-label="Security verification summary">
+          <div class="termbar"><i></i><i></i><i></i></div>
+          <pre><span class="blue">$</span> pytest -q
+.......................................................................  [100%]
+<span class="ok">71 passed</span>
+
+<span class="ok">SH-01 PASS</span>  Budget-day binding
+  authorization day remains authoritative across UTC midnight
+
+<span class="ok">SH-02 PASS</span>  Destination policy
+  public-by-default · private requires server-side opt-in
+  metadata / link-local destinations remain blocked
+
+<span class="ok">SH-03 PASS</span>  Request body limit
+  oversized bodies rejected before unbounded buffering
+  exactly one 413 response is emitted</pre>
+        </div>
+        <div class="status">
+          <div class="item"><div class="top"><strong>Budget-day binding</strong><span class="badge done">Closed</span></div><p>Commit, release, unknown, and human-approved paths use the persisted authorization-day binding.</p></div>
+          <div class="item"><div class="top"><strong>Destination policy</strong><span class="badge done">Closed</span></div><p>Public destinations are the default; agent-controlled policy overrides are forbidden.</p></div>
+          <div class="item"><div class="top"><strong>Body-limit protocol</strong><span class="badge done">Closed</span></div><p>Oversized payloads terminate at the ASGI boundary without a duplicate downstream response.</p></div>
+          <div class="item"><div class="top"><strong>HTTPS DNS TOCTOU</strong><span class="badge known">Known limit</span></div><p>HTTPS still resolves by hostname for SNI/certificate validation; the TLS peer IP is not pinned.</p></div>
+          <div class="item"><div class="top"><strong>Legacy receipts</strong><span class="badge known">Known limit</span></div><p>Receipts created before persisted budget bindings can fall back to the execution-day lookup.</p></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="wrap split">
+      <div>
+        <div class="section-kicker">API surface</div>
+        <h2>Small by design.</h2>
+        <p class="section-lead">The gateway exposes only the minimum surfaces required to submit intent, approve constrained actions, inspect receipts, and check health.</p>
+        <ul class="narrow">
+          <li><b>POST /v1/intents</b><span>Submit a signed agent intent for evaluation.</span></li>
+          <li><b>POST /v1/approvals</b><span>Attach human approval where policy requires it.</span></li>
+          <li><b>GET /v1/receipts/{id}</b><span>Read the signed authorization / execution receipt.</span></li>
+          <li><b>GET /health</b><span>Gateway health and enforcer identity.</span></li>
+        </ul>
+      </div>
+      <div class="codebox">
+        <div class="codehead"><span>Conceptual policy</span><button class="copy" type="button" data-copy>Copy</button></div>
+        <pre id="snippet">Route(
+  audience="mandate://procurement",
+  base_url="https://api.example.com",
+  methods=("POST",),
+  paths=("/orders",),
+  network_policy="public",
+)
+
+# Agent JSON cannot provide:
+# target_url
+# destination_url
+# host / base_url / proxy_url / url
+# network_policy</pre>
+      </div>
+    </div>
+  </section>
+
+  <section id="scope">
+    <div class="wrap">
+      <div class="section-kicker">Deliberate scope</div>
+      <h2>Mandate is not trying to be everything.</h2>
+      <p class="section-lead">The current release is an enforcement gateway, not an identity ecosystem or payment network. Keeping that boundary narrow makes its security properties easier to reason about and test.</p>
+      <div class="grid">
+        <article class="card"><h3>Included now</h3><p>Grants, constraints, nonce consumption, daily budgets, human approval, route policy, execution state, signed receipts, audit records.</p></article>
+        <article class="card"><h3>Not in v0.2.1</h3><p>MCP, A2A, EUDI, wallets, subdelegation, organization credentials, marketplace flows, payment-network behavior, or a general UI.</p></article>
+        <article class="card"><h3>Failure-aware</h3><p>Mandate does not claim perfect exactly-once HTTP. When remote execution cannot be determined, the state is explicitly EXECUTION_UNKNOWN.</p></article>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="wrap">
+      <div class="cta">
+        <div>
+          <h2>Give agents less implicit power.</h2>
+          <p>Make authority explicit, bounded, auditable, and verifiable before protected actions cross the network boundary.</p>
+        </div>
+        <a class="btn primary" href="https://github.com/BEKO2210/mandate">Explore Mandate ↗</a>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap footer">
+    <span>Mandate v0.2.1 · Enforcement gateway for AI-agent grants.</span>
+    <span>Open source · <a href="https://github.com/BEKO2210/mandate">BEKO2210/mandate</a></span>
+  </div>
+</footer>
+
+<script>
+  const btn=document.querySelector("[data-copy]");
+  if(btn) btn.addEventListener("click", async()=>{
+    const text=document.getElementById("snippet").innerText;
+    try{await navigator.clipboard.writeText(text);btn.textContent="Copied";setTimeout(()=>btn.textContent="Copy",1400)}catch(e){}
+  });
+</script>
+</body>
+</html>
