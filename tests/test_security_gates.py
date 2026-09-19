@@ -55,7 +55,7 @@ def _intent(akp, grant_id, **kw):
 
 
 def _setup(tmp_path, dummy, daily=5000, human=None):
-    route = Route("mandate://procurement", dummy.base_url, ("POST",), ("/orders",), timeout=0.4)
+    route = Route("mandate://procurement", dummy.base_url, ("POST",), ("/orders",), timeout=0.4, network_policy="allow_private")
     engine = Engine(
         Store(tmp_path / "obj"),
         key_provider=PersistedDevKeyProvider(tmp_path / "keys"),
@@ -212,7 +212,6 @@ def test_g11_approval_replay_zero(tmp_path):
     try:
         engine, dummy, person, pkp, agent, akp, grant = _setup(tmp_path, dummy, human=50)
         rec = engine.submit_intent(_intent(akp, grant["id"], action="purchase.office", amount=80))
-        # craft reusable approval
         from mandate.engine import Engine as E
         intent = rec["intent"]
         from mandate.models import new_id
@@ -264,7 +263,6 @@ def test_g13_expired_after_hold_zero(tmp_path):
     try:
         engine, dummy, person, pkp, agent, akp, grant = _setup(tmp_path, dummy, human=50)
         rec = engine.submit_intent(_intent(akp, grant["id"], action="purchase.office", amount=80))
-        # rewrite grant expiry in ledger
         with engine.ledger.tx() as tx:
             g = tx.get_grant(grant["id"])
             body = {k: v for k, v in g.items() if k != "proof"}
@@ -367,7 +365,6 @@ def test_g19_tampered_receipt_rejected(env):
         body = json.loads(row["body"])
         body["outcome"] = "EXECUTED"
         tx.cas_state(rec["id"], "AUTHORIZED", "DENIED", body) if False else None
-        # overwrite body without valid enforcer signature
         import sqlite3
     with engine.ledger.tx() as tx:
         body = json.loads(tx.get_receipt(rec["id"])["body"])
@@ -477,7 +474,6 @@ def test_g29_restart_same_enforcer_validates(tmp_path, env):
         routes=engine.routes,
         executor=engine.executor,
     )
-    # same sqlite
     engine2.ledger = engine.ledger
     got = engine2.get_receipt(rec["id"])
     assert got["id"] == rec["id"]

@@ -13,6 +13,7 @@ class Route:
     allowed_paths: tuple[str, ...] = ("/",)
     timeout: float = 5.0
     follow_redirects: bool = False
+    network_policy: str = "public"
 
 
 class RouteRegistry:

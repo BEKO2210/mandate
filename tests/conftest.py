@@ -31,6 +31,7 @@ def harness(tmp_path, dummy):
         allowed_methods=("POST",),
         allowed_paths=("/orders",),
         timeout=0.4,
+        network_policy="allow_private",
     )
     keys = PersistedDevKeyProvider(tmp_path / "enforcer-keys")
     engine = Engine(

@@ -81,6 +81,7 @@ class Engine:
         ledger: Ledger | None = None,
         routes: RouteRegistry | None = None,
         executor=None,
+        clock=None,
     ) -> None:
         if ledger is not None:
             self.ledger = ledger
@@ -106,6 +107,13 @@ class Engine:
         self.routes = routes or RouteRegistry()
         self.executor = executor
         self._store = store
+        self.clock = clock or utcnow
+
+    def _now(self):
+        return self.clock()
+
+    def _day(self) -> str:
+        return self._now().strftime("%Y-%m-%d")
 
     def register_principal(self, name: str, kind: str = "person", jurisdiction: str = "DE"):
         kp = KeyPair.generate()
@@ -223,8 +231,9 @@ class Engine:
                 if not agent_doc:
                     raise MandateError("unknown agent")
 
-                spent = tx.spent(grant.id, intent.currency, _day())
+                spent = tx.spent(grant.id, intent.currency, self._day())
                 decision = evaluate(grant, intent, spent_today=spent)
+                budget_day = None
 
                 if decision.requires_human:
                     state = "HUMAN_REQUIRED"
@@ -233,15 +242,18 @@ class Engine:
                     cap = (grant.constraints or {}).get("max_daily_amount")
                     cap_f = float(cap) if cap is not None else None
                     amt = intent.amount or 0.0
-                    if not tx.reserve(grant.id, intent.currency, _day(), amt, cap_f):
+                    budget_day = self._day()
+                    if not tx.reserve(grant.id, intent.currency, budget_day, amt, cap_f):
                         decision.allowed = False
                         decision.reasons = ["budget reservation failed"]
                         state = "DENIED"
+                        budget_day = None
                         tx.audit("intent.denied", {"reason": "budget"}, intent.id)
                     else:
                         state = "AUTHORIZED"
+                        tx.put_budget_binding(receipt_id, grant.id, intent.currency, budget_day, amt)
                         tx.audit("authorization.created", {"receipt_id": receipt_id}, intent.id)
-                        tx.audit("budget.reserved", {"amount": amt}, intent.id)
+                        tx.audit("budget.reserved", {"amount": amt, "day": budget_day}, intent.id)
                 else:
                     state = "DENIED"
                     tx.audit("intent.denied", {"reasons": decision.reasons}, intent.id)
@@ -265,7 +277,10 @@ class Engine:
                     outcome=state,
                 )
                 rec.id = receipt_id
-                signed_receipt = sign_object(self.enforcer, rec.to_dict())
+                signed_body = rec.to_dict()
+                if budget_day:
+                    signed_body["budget_day"] = budget_day
+                signed_receipt = sign_object(self.enforcer, signed_body)
                 tx.insert_receipt(
                     {
                         "id": receipt_id,
@@ -280,6 +295,7 @@ class Engine:
                         "state": state,
                         "execution_id": None,
                         "body": signed_receipt,
+                        "budget_day": budget_day,
                     }
                 )
                 return signed_receipt
@@ -396,7 +412,7 @@ class Engine:
                     raise MandateError("grant signature invalid")
                 grant = _grant_from_doc(grant_doc)
                 intent = _intent_from_signed(intent_doc)
-                spent = tx.spent(grant.id, intent.currency, _day())
+                spent = tx.spent(grant.id, intent.currency, self._day())
                 decision = evaluate(grant, intent, spent_today=spent, skip_human=True)
                 if not decision.allowed:
                     new_body = {k: v for k, v in body.items() if k != "proof"}
@@ -412,7 +428,8 @@ class Engine:
                 cap = (grant.constraints or {}).get("max_daily_amount")
                 cap_f = float(cap) if cap is not None else None
                 amt = intent.amount or 0.0
-                if not tx.reserve(grant.id, intent.currency, _day(), amt, cap_f):
+                budget_day = self._day()
+                if not tx.reserve(grant.id, intent.currency, budget_day, amt, cap_f):
                     new_body = {k: v for k, v in body.items() if k != "proof"}
                     new_body["decision"] = {"allowed": False, "reasons": ["budget reservation failed"], "requires_human": False}
                     new_body["outcome"] = "DENIED"
@@ -428,10 +445,13 @@ class Engine:
                     "approval_id": a.get("approval_id"),
                 }
                 new_body["outcome"] = "AUTHORIZED"
+                new_body["budget_day"] = budget_day
                 signed = sign_object(self.enforcer, new_body)
                 if not tx.cas_state(a["receipt_id"], "HUMAN_REQUIRED", "AUTHORIZED", signed):
                     raise MandateError("invalid state transition")
-                tx.audit("authorization.created", {"receipt_id": a["receipt_id"], "via": "approval"}, a.get("approval_id"))
+                tx.put_budget_binding(a["receipt_id"], grant.id, intent.currency, budget_day, amt)
+                tx.set_receipt_budget_day(a["receipt_id"], budget_day)
+                tx.audit("authorization.created", {"receipt_id": a["receipt_id"], "via": "approval", "day": budget_day}, a.get("approval_id"))
                 return signed
         except StorageError as exc:
             raise MandateError("storage error") from exc
@@ -503,14 +523,19 @@ class Engine:
                 if not tx.cas_state(receipt_id, "EXECUTING", dst, signed):
                     raise MandateError("invalid state transition")
                 amt = float(row["amount"] or 0)
-                if result.state == "EXECUTED":
-                    tx.commit_budget(row["grant_id"], row["currency"] or "EUR", _day(), amt)
-                    tx.audit("execution.succeeded", {"execution_id": execution_id}, receipt_id)
-                elif result.state == "EXECUTION_FAILED":
-                    tx.release_budget(row["grant_id"], row["currency"] or "EUR", _day(), amt)
-                    tx.audit("execution.failed", {"execution_id": execution_id}, receipt_id)
+                binding = tx.get_budget_binding(receipt_id)
+                if binding:
+                    gid, curr, day, bamt = binding["grant_id"], binding["currency"], binding["day"], float(binding["amount"])
                 else:
-                    tx.audit("execution.unknown", {"execution_id": execution_id}, receipt_id)
+                    gid, curr, day, bamt = row["grant_id"], row["currency"] or "EUR", self._day(), amt
+                if result.state == "EXECUTED":
+                    tx.commit_budget(gid, curr, day, bamt)
+                    tx.audit("execution.succeeded", {"execution_id": execution_id, "budget_day": day}, receipt_id)
+                elif result.state == "EXECUTION_FAILED":
+                    tx.release_budget(gid, curr, day, bamt)
+                    tx.audit("execution.failed", {"execution_id": execution_id, "budget_day": day}, receipt_id)
+                else:
+                    tx.audit("execution.unknown", {"execution_id": execution_id, "budget_day": day}, receipt_id)
                 tx.put_execution(execution_id, receipt_id, idem, result.state, new_body["execution"])
                 return signed
         except StorageError as exc:
