@@ -47,6 +47,7 @@ class Constraint:
     counterparties_allow: list[str] = field(default_factory=list)
     counterparties_deny: list[str] = field(default_factory=list)
     require_human_above: float | None = None
+    audiences: list[str] = field(default_factory=list)
     extra: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
