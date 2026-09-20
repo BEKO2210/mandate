@@ -59,10 +59,10 @@
             <title id="flow-title">Mandate authorization flow</title>
             <desc id="flow-desc">Principal grants authority to an agent. Mandate evaluates the intent. Human approval may be requested. Only an authorized request reaches the registered upstream. The result becomes a signed receipt.</desc>
             <defs><linearGradient id="wire" x1="0" x2="1"><stop stop-color="#c9b896"/><stop offset="1" stop-color="#ece8de"/></linearGradient></defs>
-            <path class="wire" d="M90 70 H280 V214 H470" fill="none" stroke="url(#wire)" stroke-width="1.5"/>
-            <path class="wire" d="M280 214 V340" fill="none" stroke="url(#wire)" stroke-width="1.5"/>
-            <path class="wire" d="M280 340 H470 V214" fill="none" stroke="url(#wire)" stroke-width="1.5"/>
-            <path class="wire" d="M470 214 V340" fill="none" stroke="url(#wire)" stroke-width="1.5"/>
+            <path class="wire wire-main" d="M90 70 H280 V214 H470" fill="none" stroke="url(#wire)" stroke-width="1.5"/>
+            <path class="wire wire-optional" d="M280 214 V340" fill="none" stroke="url(#wire)" stroke-width="1.5"/>
+            <path class="wire wire-optional" d="M280 340 H470 V214" fill="none" stroke="url(#wire)" stroke-width="1.5"/>
+            <path class="wire wire-main" d="M470 214 V340" fill="none" stroke="url(#wire)" stroke-width="1.5"/>
             <circle id="packet" class="packet" cx="90" cy="70" r="5" fill="#ece8de"/>
             <g data-stage><rect x="24" y="42" width="132" height="56" fill="#1b1a17" stroke="#3d3a34"/><text x="90" y="66" text-anchor="middle" fill="#ece8de" font-size="13">Principal</text><text x="90" y="84" text-anchor="middle" fill="#8a8579" font-size="10">signed grant</text></g>
             <g data-stage><rect x="214" y="42" width="132" height="56" fill="#1b1a17" stroke="#3d3a34"/><text x="280" y="66" text-anchor="middle" fill="#ece8de" font-size="13">Agent intent</text><text x="280" y="84" text-anchor="middle" fill="#8a8579" font-size="10">no target URL</text></g>
