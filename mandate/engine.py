@@ -475,6 +475,48 @@ class Engine:
                 body = json.loads(row["body"])
                 if not verify_object(body, expected_did=self.enforcer_did):
                     raise MandateError("receipt was not signed by this enforcer")
+                # Revalidate in the same transaction as the execution claim.
+                # A revocation committed before this claim must prevent dispatch.
+                intent = _intent_from_signed(body["intent"])
+                if not verify_object(body["intent"], expected_did=body["agent_did"]):
+                    raise MandateError("intent signature invalid")
+                for field in ("grant_id", "agent_did", "audience", "action", "amount", "currency", "nonce"):
+                    if row[field] != getattr(intent, field):
+                        raise MandateError("receipt execution fields mismatch")
+                grant_doc = tx.get_grant(body["grant_id"])
+                if not grant_doc or not verify_object(grant_doc, expected_did=body["principal_did"]):
+                    raise MandateError("grant signature invalid")
+                grant = _grant_from_doc(grant_doc)
+                if grant.id != intent.grant_id or grant.principal_did != body["principal_did"]:
+                    raise MandateError("grant identity mismatch")
+                binding = tx.get_budget_binding(receipt_id)
+                if not binding:
+                    raise MandateError("authorization lacks budget binding")
+                if (binding["grant_id"], binding["currency"], binding["amount"]) != (
+                    intent.grant_id, intent.currency, intent.amount or 0,
+                ):
+                    raise MandateError("budget binding mismatch")
+                # The current reservation already counts toward this day's cap.
+                spent = max(0, tx.spent(grant.id, intent.currency, binding["day"]) - binding["amount"])
+                approval = tx.get_approval_by_receipt(receipt_id)
+                human_approved = False
+                if approval and approval["consumed"]:
+                    approval_body = json.loads(approval["body"])
+                    human_approved = (
+                        verify_object(approval_body, expected_did=body["principal_did"])
+                        and approval_body.get("receipt_id") == receipt_id
+                        and approval_body.get("intent_id") == intent.id
+                    )
+                decision = evaluate(grant, intent, spent_today=spent, skip_human=human_approved)
+                if not decision.allowed:
+                    denied = {k: v for k, v in body.items() if k != "proof"}
+                    denied.update(outcome="DENIED", decision=decision.to_dict())
+                    signed = sign_object(self.enforcer, denied)
+                    if not tx.cas_state(receipt_id, "AUTHORIZED", "DENIED", signed):
+                        raise MandateError("authorization already consumed")
+                    tx.release_budget(grant.id, intent.currency, binding["day"], binding["amount"])
+                    tx.audit("execution.denied", {"receipt_id": receipt_id, "reasons": decision.reasons}, receipt_id)
+                    return signed
                 audience = row["audience"]
                 route = self.routes.get(audience)
                 if route is None:
