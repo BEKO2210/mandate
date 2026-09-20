@@ -55,10 +55,6 @@ h1 { margin: 0 0 24px; font-family: Georgia, "Source Serif 4", serif; font-size:
 .flow-svg { width:100%; height:auto; display:block; position:relative; z-index:1; }
 .wire { stroke-dasharray: 6 8; animation: dash 18s linear infinite; }
 .stage-label { margin: 8px 4px 0; font-family: "IBM Plex Mono", monospace; font-size: 12px; color: var(--text-3); min-height: 18px; }
-.panel-kicker { margin: 0 0 12px; color: var(--text-3); font-size: 12px; letter-spacing: .14em; text-transform: uppercase; }
-.panel-rule { margin: 0 0 32px; font-family: Georgia, serif; font-size: clamp(22px,3vw,28px); line-height: 1.25; }
-.panel-meta { list-style: none; margin: 0; padding: 0; display: grid; gap: 12px; color: var(--text-2); font-size: 14px; }
-.panel-meta span { display: inline-block; min-width: 88px; color: var(--text); font-family: "IBM Plex Mono", monospace; font-size: 13px; }
 section { padding: 64px 0; border-top: 1px solid var(--line); }
 .kicker { margin: 0 0 12px; color: var(--text-3); font-size: 12px; letter-spacing: .14em; text-transform: uppercase; }
 h2 { margin: 0 0 16px; font-family: Georgia, "Source Serif 4", serif; font-size: clamp(28px,4vw,42px); line-height: 1.15; font-weight: 600; max-width: 22ch; }
@@ -97,14 +93,13 @@ pre { margin: 0; padding: 24px; overflow: auto; font-size: 13px; line-height: 1.
 .endpoints li { padding-bottom: 16px; border-bottom: 1px solid var(--line); }
 .endpoints code { color: var(--brand); font-size: 14px; }
 .endpoints span { display: block; margin-top: 4px; color: var(--text-2); font-size: 14px; }
-.scope-grid article { border: 1px solid var(--line); padding: 24px; background: var(--bg-raised); }
-.scope-grid ul { margin: 0; padding: 0 0 0 18px; color: var(--text-2); display: grid; gap: 8px; }
 .cta { display: flex; justify-content: space-between; gap: 32px; align-items: end; }
 .cta p { margin: 0; color: var(--text-2); max-width: 48ch; }
 footer { border-top: 1px solid var(--line); padding: 24px 0 48px; color: var(--text-3); font-size: 14px; }
 .foot { display: flex; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
 .rise { opacity: 0; transform: translateY(14px); transition: opacity .55s ease, transform .55s ease; }
 .rise.in { opacity: 1; transform: none; }
+.packet { transition: none; }
 @keyframes dash { to { stroke-dashoffset: -280; } }
 @keyframes glow { 0%,100% { opacity:.45; } 50% { opacity:.95; } }
 @media (max-width: 1024px) {
@@ -120,7 +115,7 @@ footer { border-top: 1px solid var(--line); padding: 24px 0 48px; color: var(--t
   .menu { display: inline-block; }
   .nav-end .btn-ghost { display: none; }
   h1 { max-width: none; font-size: 36px; }
-  .pipeline, .arch, .facts, .scope-grid { grid-template-columns: 1fr; }
+  .pipeline, .arch, .facts { grid-template-columns: 1fr; }
   .arch li { min-height: 0; flex-direction: row; align-items: baseline; gap: 12px; padding: 14px 16px; }
   .arch strong { min-width: 92px; }
   .pipeline li { min-height: 0; }
@@ -129,4 +124,7 @@ footer { border-top: 1px solid var(--line); padding: 24px 0 48px; color: var(--t
   html { scroll-behavior: auto; }
   .wire, .stageboard::before { animation: none !important; }
   .rise { opacity: 1; transform: none; }
+  .packet { display: none; }
 }
+html.reduced .wire, html.reduced .stageboard::before { animation: none !important; }
+html.reduced .packet { display: none; }
