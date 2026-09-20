@@ -53,7 +53,7 @@ h1 { margin: 0 0 24px; font-family: Georgia, "Source Serif 4", serif; font-size:
 .stageboard { padding: 16px; position: relative; overflow: hidden; }
 .stageboard::before { content:""; position:absolute; width:240px; height:240px; right:-40px; top:-60px; background: radial-gradient(circle, rgba(201,184,150,.16), transparent 70%); animation: glow 8s ease-in-out infinite; pointer-events:none; }
 .flow-svg { width:100%; height:auto; display:block; position:relative; z-index:1; }
-.wire { stroke-dasharray: 6 8; animation: dash 18s linear infinite; }
+.wire { stroke-dasharray: 6 8; animation: dash 18s linear infinite; }\n.wire-optional { opacity: .58; stroke-dasharray: 3 9; }
 .stage-label { margin: 8px 4px 0; font-family: "IBM Plex Mono", monospace; font-size: 12px; color: var(--text-3); min-height: 18px; }
 section { padding: 64px 0; border-top: 1px solid var(--line); }
 .kicker { margin: 0 0 12px; color: var(--text-3); font-size: 12px; letter-spacing: .14em; text-transform: uppercase; }
