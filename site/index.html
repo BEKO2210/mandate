@@ -46,7 +46,7 @@
     <section class="hero" id="top">
       <div class="wrap hero-grid">
         <div>
-          <p class="eyebrow">Enforcement gateway · 71 of 71 tests passing</p>
+          <p class="eyebrow">Enforcement gateway · verified test suite</p>
           <h1>Authorization before execution.</h1>
           <p class="lead">Mandate sits in front of protected tools. An AI agent may propose an action. It does not execute until a signed, scoped, budget-aware grant has been verified.</p>
           <div class="actions">
@@ -54,12 +54,16 @@
             <a class="btn btn-ghost" href="#diagram">Watch the stages</a>
           </div>
         </div>
-        <aside class="stageboard" aria-label="Animated authorization flow">
-          <svg class="flow-svg" viewBox="0 0 560 420" role="img">
+        <aside class="stageboard" aria-labelledby="flow-title">
+          <svg class="flow-svg" viewBox="0 0 560 420" role="img" aria-labelledby="flow-title flow-desc">
+            <title id="flow-title">Mandate authorization flow</title>
+            <desc id="flow-desc">Principal grants authority to an agent. Mandate evaluates the intent. Human approval may be requested. Only an authorized request reaches the registered upstream. The result becomes a signed receipt.</desc>
             <defs><linearGradient id="wire" x1="0" x2="1"><stop stop-color="#c9b896"/><stop offset="1" stop-color="#ece8de"/></linearGradient></defs>
-            <path class="wire" d="M80 70 H280 V210 H480" fill="none" stroke="url(#wire)" stroke-width="1.5"/>
-            <path class="wire" d="M280 210 V340 H480" fill="none" stroke="url(#wire)" stroke-width="1.5"/>
-            <circle r="5" fill="#ece8de"><animateMotion dur="7s" repeatCount="indefinite" path="M80 70 H280 V210 H480"/></circle>
+            <path class="wire" d="M90 70 H280 V214 H470" fill="none" stroke="url(#wire)" stroke-width="1.5"/>
+            <path class="wire" d="M280 214 V340" fill="none" stroke="url(#wire)" stroke-width="1.5"/>
+            <path class="wire" d="M280 340 H470 V214" fill="none" stroke="url(#wire)" stroke-width="1.5"/>
+            <path class="wire" d="M470 214 V340" fill="none" stroke="url(#wire)" stroke-width="1.5"/>
+            <circle id="packet" class="packet" cx="90" cy="70" r="5" fill="#ece8de"/>
             <g data-stage><rect x="24" y="42" width="132" height="56" fill="#1b1a17" stroke="#3d3a34"/><text x="90" y="66" text-anchor="middle" fill="#ece8de" font-size="13">Principal</text><text x="90" y="84" text-anchor="middle" fill="#8a8579" font-size="10">signed grant</text></g>
             <g data-stage><rect x="214" y="42" width="132" height="56" fill="#1b1a17" stroke="#3d3a34"/><text x="280" y="66" text-anchor="middle" fill="#ece8de" font-size="13">Agent intent</text><text x="280" y="84" text-anchor="middle" fill="#8a8579" font-size="10">no target URL</text></g>
             <g data-stage><rect x="196" y="182" width="168" height="64" fill="#22201c" stroke="#c9b896"/><text x="280" y="210" text-anchor="middle" fill="#ece8de" font-size="14">MANDATE</text><text x="280" y="228" text-anchor="middle" fill="#c9b896" font-size="10">evaluate · reserve · bind</text></g>
@@ -75,7 +79,7 @@
       <div class="wrap">
         <p class="kicker">Architecture</p>
         <h2>Six stages. One enforcement boundary.</h2>
-        <p class="section-lead">The request moves through these stages in order. If any stage fails, the upstream connector is never reached.</p>
+        <p class="section-lead">The request moves through these stages in order. Human approval is conditional. If any required stage fails, the upstream connector is never reached.</p>
         <ol class="arch">
           <li data-stage class="rise"><span class="arch-id">01</span><strong>Principal</strong><em>signed grant</em></li>
           <li data-stage class="rise"><span class="arch-id">02</span><strong>Agent</strong><em>intent only</em></li>
@@ -120,12 +124,12 @@
       <div class="wrap">
         <p class="kicker">Hardening status</p>
         <h2>Proven as behavior, not as copy.</h2>
-        <p class="section-lead">v0.2.1 was reproduced from a clean clone with 71 tests passing.</p>
+        <p class="section-lead">v0.2.1 was reproduced from a clean clone. Known limitation: HTTPS DNS TOCTOU / TLS peer IP is not pinned.</p>
         <div class="sec-grid">
           <div class="terminal">
             <div class="termbar">pytest · fresh clone</div>
             <pre><span class="muted">$</span> pytest -q
-<span class="ok">71 passed</span>
+<span class="ok">suite passing</span>
 
 <span class="ok">SH-01 PASS</span>  Budget-day binding
 <span class="ok">SH-02 PASS</span>  Destination policy
@@ -158,8 +162,8 @@
           <pre id="snippet">Route(
   audience="mandate://procurement",
   base_url="https://api.example.com",
-  methods=("POST",),
-  paths=("/orders",),
+  allowed_methods=("POST",),
+  allowed_paths=("/orders",),
   network_policy="public",
 )</pre>
         </div>
