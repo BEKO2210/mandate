@@ -45,6 +45,19 @@ whose process died; the gateway runs it at startup.
 
 Covered by G64-G67.
 
+## SH-06 — The request body must be decided server-side and bound — DONE in v0.3.0
+
+Until 0.2.2 only `allowed_methods[0]` and `allowed_paths[0]` were dispatched
+with a fixed four-field body, so the gateway could not carry real work and the
+receipt said nothing about the bytes that left it. A route now declares an
+`Operation` per signed action: method, path, an allowlist of intent fields and
+an allowlist of `context` keys. The enforcer builds the body, hashes it, and
+signs that hash into the receipt before dispatch; the executor sends exactly
+those bytes. Undeclared fields never travel, non-scalar or oversized values are
+refused, and an operation cannot widen its route's method or path allowlist.
+
+Covered by G70-G79.
+
 ## Residual / next
 
 - HTTPS DNS TOCTOU (check then connect by name)
@@ -52,7 +65,6 @@ Covered by G64-G67.
 - No transport authentication, multi-tenancy or rate limiting on the gateway
 - Receipts are individually signed but not chained; an operator with database
   access can delete or roll back history
-- Only `allowed_methods[0]` and `allowed_paths[0]` are dispatched, and the
-  intent's `context` is not forwarded, so the request body is not bound into
-  the receipt
+- The request hash binds what the gateway sent, not what the upstream received
+- Routes and operations are configured in code, not from a file or admin API
 - Reconciling an EXECUTION_UNKNOWN reservation is still a manual decision

@@ -3,6 +3,42 @@
 All notable changes to this project are documented here.
 This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] — 2026-09-21
+
+### Added
+
+- **Operations.** `Route.operations` declares, per signed action, the method,
+  path and body fields that may leave the gateway. `Operation.fields` is an
+  allowlist over known intent fields; `Operation.context_fields` forwards
+  selected `context` keys, scalars only. The agent chooses values, never field
+  names and never a destination. Gates G70, G77.
+- **Request binding.** The enforcer builds the body, hashes it, and signs that
+  hash into the receipt before the request is sent, as
+  `execution.request = {method, path, destination, hash, size}`. A receipt now
+  states what was sent, not merely what was authorized. Gates G71, G72.
+- Route configuration is validated at construction: an operation cannot widen
+  `allowed_methods` or `allowed_paths`, cannot name an unknown intent field,
+  and two operations cannot claim the same action. Gate G76.
+
+### Changed
+
+- `UpstreamExecutor.forward()` takes the encoded body as `bytes` instead of a
+  dict and sends exactly those bytes with an explicit `Content-Type`, so the
+  hash in the receipt and the bytes on the wire cannot drift apart. This is a
+  breaking change for custom executors.
+- An authorized action with no matching operation on its route fails closed
+  before the execution claim; nothing is dispatched and the receipt stays
+  AUTHORIZED. Gate G75.
+- A declared context field is required, a non-scalar or oversized value is
+  refused, and an undeclared key never reaches the upstream. Gates G73, G74, G79.
+- A route with no declared operations keeps the pre-0.3 body and first
+  registered method and path. Gate G78.
+
+### Still open in the 0.3 line
+
+Transport authentication, multi-tenancy, rate limiting, a KMS key provider,
+route configuration outside code, and nonce pruning.
+
 ## [0.2.2] — 2026-09-21
 
 ### Fixed

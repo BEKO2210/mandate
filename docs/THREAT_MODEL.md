@@ -1,4 +1,4 @@
-# Threat model (v0.2.2)
+# Threat model (v0.3.0)
 
 TRUSTED: gateway, KeyProvider, route registry, SQLite tx layer, executor code, server-side Route.network_policy.
 UNTRUSTED: agent, agent JSON, network, unsigned human input, upstream bodies, DNS answers.
@@ -43,3 +43,18 @@ EXECUTION_UNKNOWN; the gateway runs that at startup. Whether the upstream saw
 the request is unknowable from here, so the reservation is kept and freeing it
 stays a human decision. An exception out of the executor is treated the same
 way. Neither path re-dispatches: the execution claim remains single-use.
+
+## Request composition
+
+The agent signs an intent; it never composes the bytes that leave the gateway.
+An Operation on the route names the method, the path, which intent fields and
+which `context` keys may appear in the body. Values come from the signed
+intent, names come from the server-side configuration, and only scalars cross
+the boundary, so an agent cannot smuggle a shape or a destination the operation
+never declared. An operation cannot widen its route's method or path allowlist.
+
+The body is hashed and the hash is signed into the receipt before the request
+is sent, and the executor sends exactly those bytes. This binds what the
+gateway committed to sending. It is not proof that the upstream received them:
+only the response hash speaks to that, and a timeout still yields
+EXECUTION_UNKNOWN.

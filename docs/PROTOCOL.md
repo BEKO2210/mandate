@@ -20,3 +20,21 @@ EXECUTION_FAILED | EXECUTION_UNKNOWN.
 EXECUTING is a claim, not a result: it is stored as a signed receipt so a
 crashed dispatch is never reported as AUTHORIZED. Only EXECUTION_UNKNOWN keeps
 its budget reservation.
+
+## Operations and request binding (0.3.0)
+
+The upstream URL, method and path exist only in the server-side registry. A
+route declares an Operation per signed action:
+
+    Operation(action, method, path, fields, context_fields)
+
+`fields` is an allowlist over action, amount, amount_minor, currency,
+counterparty, summary, intent_id and execution_id. `context_fields` forwards
+named keys of the intent's `context`, scalars only, each required once
+declared. Nothing else reaches the upstream.
+
+The receipt carries, signed before dispatch:
+
+    execution.request = {method, path, destination, hash, size}
+
+where `hash` is `sha256:<hex>` over the exact bytes sent.
