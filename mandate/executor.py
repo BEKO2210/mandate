@@ -144,7 +144,10 @@ def assert_safe_destination(url: str, route: Route) -> list[str]:
 
 
 class UpstreamExecutor:
-    def forward(self, route: Route, method: str, path: str, json_body: dict, idempotency_key: str) -> ExecutionResult:
+    def forward(
+        self, route: Route, method: str, path: str, body: bytes, idempotency_key: str
+    ) -> ExecutionResult:
+        """Send exactly `body`. The receipt already committed to its hash."""
         if method not in route.allowed_methods:
             return ExecutionResult("EXECUTION_FAILED", None, 0, None, "method not allowed")
         if path not in route.allowed_paths:
@@ -160,7 +163,13 @@ class UpstreamExecutor:
         t0 = time.monotonic()
         parsed = urlparse(url)
         connect_url = url
-        headers = {"X-Idempotency-Key": idempotency_key, "X-Mandate-Audience": route.audience}
+        headers = {
+            "X-Idempotency-Key": idempotency_key,
+            "X-Mandate-Audience": route.audience,
+            "Content-Type": "application/json",
+            # Same form as execution.request.hash in the receipt.
+            "X-Mandate-Request-Hash": "sha256:" + hashlib.sha256(body).hexdigest(),
+        }
         if parsed.scheme == "http" and pinned:
             host = parsed.hostname or ""
             port = parsed.port or 80
@@ -177,7 +186,7 @@ class UpstreamExecutor:
                 resp = client.request(
                     method,
                     connect_url,
-                    json=json_body,
+                    content=body,
                     headers=headers,
                 )
         except httpx.TimeoutException:

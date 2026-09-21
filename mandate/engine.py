@@ -15,6 +15,7 @@ from .keys import EphemeralKeyProvider, KeyProvider, PersistedDevKeyProvider
 from .ledger import Ledger, StorageError
 from .models import AgentCard, Constraint, Grant, Intent, Principal, Receipt, new_id
 from .money import MoneyError
+from .payload import PayloadError, body_hash, build_payload, encode
 from .policy import constraint_minor, evaluate, intent_amount_minor
 from .routes import RouteRegistry
 from .states import InvalidTransition
@@ -560,6 +561,32 @@ class Engine:
                 if prior:
                     r2 = tx.get_receipt(prior["receipt_id"])
                     return json.loads(r2["body"])
+                # The body is built and hashed before the claim, so the signed
+                # receipt commits to the exact bytes that will be sent.
+                operation = route.operation_for(intent.action)
+                if route.operations and operation is None:
+                    raise MandateError(f"no operation for action '{intent.action}'")
+                try:
+                    # None stays None here: an intent without an amount must
+                    # not be reported to the upstream as a zero.
+                    payload = build_payload(
+                        operation, intent, execution_id,
+                        amount_minor if intent.amount is not None else None,
+                    )
+                    request_body = encode(payload)
+                except PayloadError as exc:
+                    raise MandateError(f"invalid request payload: {exc}") from exc
+                if operation is not None:
+                    method, path = operation.method, operation.path
+                else:
+                    method, path = route.allowed_methods[0], route.allowed_paths[0]
+                request_meta = {
+                    "method": method,
+                    "path": path,
+                    "destination": route.base_url.rstrip("/") + path,
+                    "hash": body_hash(request_body),
+                    "size": len(request_body),
+                }
                 # The claim is signed as EXECUTING. If this process dies here,
                 # the stored receipt states what actually happened instead of
                 # still claiming AUTHORIZED.
@@ -573,6 +600,7 @@ class Engine:
                     "enforcer_did": self.enforcer_did,
                     "predecessor_id": receipt_id,
                     "started_at": started,
+                    "request": request_meta,
                 }
                 signed_claim = sign_object(self.enforcer, claim)
                 if not tx.cas_state(receipt_id, "AUTHORIZED", "EXECUTING", signed_claim):
@@ -585,14 +613,8 @@ class Engine:
         except StorageError as exc:
             raise MandateError("storage error") from exc
 
-        payload = {
-            "action": row["action"],
-            "amount": row["amount"],
-            "currency": row["currency"],
-            "execution_id": execution_id,
-        }
         try:
-            result = executor.forward(route, route.allowed_methods[0], route.allowed_paths[0], payload, idem)
+            result = executor.forward(route, method, path, request_body, idem)
         except Exception as exc:
             # The request may or may not have reached the upstream. Anything
             # other than EXECUTION_UNKNOWN would be a claim we cannot support.
@@ -615,6 +637,8 @@ class Engine:
                     "idempotency_key": idem,
                     "enforcer_did": self.enforcer_did,
                     "predecessor_id": receipt_id,
+                    "started_at": started,
+                    "request": request_meta,
                     "error": result.error,
                 }
                 signed = sign_object(self.enforcer, new_body)

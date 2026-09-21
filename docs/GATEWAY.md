@@ -21,3 +21,7 @@ The gateway has no transport authentication, no tenancy and no rate limiting.
 Anything that can reach it may submit signed objects, and `/v1/receipts/{id}`
 is readable by anyone holding an id. Terminate it behind an authenticating
 proxy on a trusted network.
+
+Routes declare operations per signed action. The agent supplies values; the
+server supplies method, path and field names. The request body is hashed and
+signed into the receipt before it is sent.

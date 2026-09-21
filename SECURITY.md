@@ -35,7 +35,9 @@ and `docs/SECURITY_BACKLOG.md`:
 - Receipts are individually signed but not chained; an operator with database
   access can delete or roll back history
 - `EXECUTION_UNKNOWN` holds its reservation until a human reconciles it
-- Only the first registered method and path of a route are dispatched
+- The receipt binds the body the gateway committed to sending, not proof of
+  upstream receipt
+- Routes and operations are configured in code, not from a file or admin API
 
 ## Supported versions
 

@@ -34,12 +34,12 @@ def create_app(engine: Engine) -> FastAPI:
         instance.state.reconciled = engine.reconcile_stale_executions()
         yield
 
-    app = FastAPI(title="Mandate Enforcement Gateway", version="0.2.2", lifespan=lifespan)
+    app = FastAPI(title="Mandate Enforcement Gateway", version="0.3.0", lifespan=lifespan)
     app.state.engine = engine
 
     @app.get("/health")
     def health():
-        return {"ok": True, "enforcer_did": engine.enforcer_did, "version": "0.2.2"}
+        return {"ok": True, "enforcer_did": engine.enforcer_did, "version": "0.3.0"}
 
     @app.post("/v1/intents")
     def post_intent(env: IntentEnvelope):

@@ -35,6 +35,8 @@ def make_handler(state: DummyState):
                 "path": self.path,
                 "method": self.command,
                 "payload": payload,
+                "raw": raw,
+                "content_type": self.headers.get("Content-Type"),
                 "idem": self.headers.get("X-Idempotency-Key"),
             }
             with state.lock:
@@ -71,6 +73,9 @@ def make_handler(state: DummyState):
             self.send_header("Content-Type", "application/json")
             self.end_headers()
             self.wfile.write(b'{"ok":true}')
+
+        do_PUT = do_POST
+        do_PATCH = do_POST
 
     return Handler
 
