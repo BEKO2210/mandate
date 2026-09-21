@@ -1,4 +1,4 @@
-# Threat model (v0.2.1)
+# Threat model (v0.2.2)
 
 TRUSTED: gateway, KeyProvider, route registry, SQLite tx layer, executor code, server-side Route.network_policy.
 UNTRUSTED: agent, agent JSON, network, unsigned human input, upstream bodies, DNS answers.
@@ -23,3 +23,23 @@ The execution claim is the ordering boundary: revocations committed before the
 claim prevent dispatch. A revocation after the claim cannot cancel an in-flight
 HTTP operation. This change does not provide exact request-byte binding, transport
 hardening, crash reconciliation, or immutable evidence; those remain follow-ups.
+
+## Money
+
+Amounts are integer minor units everywhere past validation. A float cannot
+represent 0.10 or 0.20, so summing them and comparing against a 0.30 cap
+decided wrongly in 0.2.1. Conversion happens once, at the validation boundary,
+from the same decimal text the agent's signature covers, and an amount finer
+than the currency is refused rather than rounded. The ledger refuses a
+non-integer amount outright, so no rounding can enter a budget by accident.
+
+## Crash between claim and result
+
+The execution claim is committed as a signed receipt whose outcome is
+EXECUTING, so a reader never sees AUTHORIZED for a request that was already
+dispatched. If this process dies before the result transaction, the receipt
+stays EXECUTING until `reconcile_stale_executions()` moves it to
+EXECUTION_UNKNOWN; the gateway runs that at startup. Whether the upstream saw
+the request is unknowable from here, so the reservation is kept and freeing it
+stays a human decision. An exception out of the executor is treated the same
+way. Neither path re-dispatches: the execution claim remains single-use.

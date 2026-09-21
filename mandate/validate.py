@@ -6,6 +6,7 @@ import re
 from typing import Any
 
 from .crypto import utcnow
+from .money import MoneyError, require_minor, to_minor
 
 AUDIENCE_RE = re.compile(r"^mandate://[a-z0-9][a-z0-9._-]{0,63}$")
 ACTION_RE = re.compile(r"^[a-z][a-z0-9_.]{0,63}$")
@@ -74,14 +75,29 @@ def require_currency(value: str) -> str:
     return value
 
 
-def require_amount(value: Any) -> float | None:
+def require_amount(value: Any, currency: str = "EUR") -> int | None:
+    """Validate a wire amount and return it in exact integer minor units."""
     if value is None:
         return None
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise ValidationError("invalid amount")
-    if value < 0 or value > 1_000_000_000:
-        raise ValidationError("invalid amount")
-    return float(value)
+    try:
+        return to_minor(value, currency)
+    except MoneyError as exc:
+        raise ValidationError(f"invalid amount: {exc}") from exc
+
+
+def require_amount_agreement(body: dict[str, Any], amount_minor: int | None) -> None:
+    """An explicitly supplied amount_minor must match the decimal amount."""
+    declared = body.get("amount_minor")
+    if declared is None:
+        return
+    try:
+        declared = require_minor(declared)
+    except MoneyError as exc:
+        raise ValidationError(str(exc)) from exc
+    if amount_minor is None or declared != amount_minor:
+        raise ValidationError("amount_minor does not match amount")
 
 
 def require_did(value: str) -> str:
