@@ -17,10 +17,20 @@ Startup runs `Engine.reconcile_stale_executions()`: receipts left in EXECUTING
 by a process that died are closed as EXECUTION_UNKNOWN, keeping their
 reservation.
 
-The gateway has no transport authentication, no tenancy and no rate limiting.
-Anything that can reach it may submit signed objects, and `/v1/receipts/{id}`
-is readable by anyone holding an id. Terminate it behind an authenticating
-proxy on a trusted network.
+Every endpoint but `/health` requires `Authorization: Bearer mk_<id>_<secret>`.
+The key names a tenant and carries scopes: `intents:write`, `approvals:write`,
+`receipts:read`, or `*`. A missing or invalid key is 401, a valid key without
+the scope is 403, and a key over its rate limit is 429 with `Retry-After`.
+A receipt belonging to another tenant answers 404.
+
+Issue keys with `mandate keys new --tenant acme --name ci`; the token is
+printed once. `mandate keys list` and `mandate keys disable --id <id>` manage
+them afterwards.
+
+`create_app()` requires an authenticator. For single-tenant development pass
+`auth=OpenAccess()` explicitly.
+
+    GET /v1/info -> enforcer DID, version and the calling tenant
 
 Routes declare operations per signed action. The agent supplies values; the
 server supplies method, path and field names. The request body is hashed and

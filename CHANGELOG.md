@@ -3,6 +3,49 @@
 All notable changes to this project are documented here.
 This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] — 2026-09-21
+
+### Added
+
+- **Transport authentication.** Every endpoint but `/health` requires
+  `Authorization: Bearer mk_<id>_<secret>`. Only the SHA-256 of the secret is
+  stored, verification is constant time, and an unknown key id takes the same
+  path as a wrong secret. Keys carry scopes, an optional expiry and a disable
+  switch. Gates G86, G87, G88, G93.
+- **Tenancy.** Principals, agents, grants, receipts, nonces and routes belong
+  to a tenant, and the caller's key decides which one. A record of another
+  tenant reads as absent, never as forbidden, so a valid key elsewhere cannot
+  confirm that a grant or receipt exists. Nonces are keyed per tenant, so one
+  tenant cannot burn another's. Gates G81-G85, G94, G98.
+- **Rate limiting.** A per-key token bucket, answering 429 with `Retry-After`.
+  Gates G91, G95.
+- `mandate keys new|list|disable` to issue and revoke gateway keys. The token
+  is printed once and is not recoverable.
+- `GET /v1/info` carries the enforcer DID, version and tenant, behind
+  authentication.
+
+### Changed
+
+- `create_app()` now requires an authenticator. Running unauthenticated has to
+  be chosen out loud with `auth=OpenAccess()`. Gate G92.
+- `/health` returns `{"ok": true}` only. It touches no storage and reveals no
+  identity, so it cannot be used to amplify load or probe for keys.
+- Engine methods take a `tenant` argument, defaulting to `"default"`, so
+  single-tenant deployments behave exactly as before.
+- `Route` gained a `tenant` field and `RouteRegistry.get()` resolves an
+  audience within a tenant. Two tenants may reuse an audience name without
+  ever reaching each other's upstream.
+- Issuing a grant for an agent registered in another tenant fails. Gate G98.
+- Ledger schema version 3 adds tenant columns and rebuilds the nonce table
+  with the tenant in its primary key. Pre-0.4 rows join the `default` tenant.
+
+### Still open
+
+A KMS key provider, route configuration outside code, nonce pruning, a
+tamper-evident receipt chain, and the HTTPS DNS TOCTOU residual. The rate
+limiter is in-process, which bounds one gateway process; that matches a ledger
+that is a single SQLite file on one node.
+
 ## [0.3.0] — 2026-09-21
 
 ### Added

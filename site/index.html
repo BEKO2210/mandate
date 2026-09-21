@@ -27,7 +27,7 @@
         <svg class="mark" viewBox="0 0 32 32" width="22" height="22" aria-hidden="true">
           <path d="M9 8v16M23 8v16M13 13h6v6h-6z" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square"/>
         </svg>
-        <span>Mandate</span><span class="ver">v0.3.0</span>
+        <span>Mandate</span><span class="ver">v0.4.0</span>
       </a>
       <nav class="links" id="nav-links">
         <a href="#diagram">Architecture</a>
@@ -112,11 +112,12 @@
         <h2>A narrow boundary with explicit invariants.</h2>
         <div class="facts">
           <article><h3>Cryptographic grants</h3><p>Principal authorization is signed and independently verifiable.</p></article>
-          <article><h3>Atomic budget accounting</h3><p>v0.3.0 keeps spend in integer minor units, bound to the authorization day.</p></article>
+          <article><h3>Atomic budget accounting</h3><p>v0.4.0 keeps spend in integer minor units, bound to the authorization day.</p></article>
           <article><h3>Human approval that revalidates</h3><p>Step-up does not skip evaluation.</p></article>
           <article><h3>Server-side destinations</h3><p>Public is the default. Private requires server-side opt-in.</p></article>
           <article><h3>Uncertainty stays explicit</h3><p>A timeout becomes EXECUTION_UNKNOWN.</p></article>
           <article><h3>Signed execution receipts</h3><p>Outcomes are enforcer-signed objects for audit.</p></article>
+          <article><h3>Authenticated and tenant-scoped</h3><p>Every call carries an API key. A tenant never sees another tenant's records.</p></article>
         </div>
       </div>
     </section>
@@ -124,7 +125,7 @@
       <div class="wrap">
         <p class="kicker">Hardening status</p>
         <h2>Proven as behavior, not as copy.</h2>
-        <p class="section-lead">v0.3.0 was reproduced from a clean clone. Known limitation: HTTPS DNS TOCTOU / TLS peer IP is not pinned.</p>
+        <p class="section-lead">v0.4.0 was reproduced from a clean clone. Known limitation: HTTPS DNS TOCTOU / TLS peer IP is not pinned.</p>
         <div class="sec-grid">
           <div class="terminal">
             <div class="termbar">pytest · fresh clone</div>
@@ -193,7 +194,7 @@
   </main>
   <footer>
     <div class="wrap foot">
-      <span>Mandate v0.3.0 · Enforcement gateway for AI-agent grants.</span>
+      <span>Mandate v0.4.0 · Enforcement gateway for AI-agent grants.</span>
       <a href="https://github.com/BEKO2210/mandate">BEKO2210/mandate</a>
     </div>
   </footer>

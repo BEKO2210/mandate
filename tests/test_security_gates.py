@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 from mandate.crypto import iso, sign_object, utcnow, verify_object
 from mandate.engine import Engine, MandateError
 from mandate.executor import UpstreamExecutor
+from mandate.auth import OpenAccess
 from mandate.gateway import create_app
 from mandate.keys import InMemoryKeyProvider, PersistedDevKeyProvider
 from mandate.models import Constraint, Intent
@@ -21,7 +22,7 @@ from .dummy_upstream import DummyUpstream
 
 
 def _client(engine: Engine) -> TestClient:
-    return TestClient(create_app(engine), raise_server_exceptions=False)
+    return TestClient(create_app(engine, auth=OpenAccess()), raise_server_exceptions=False)
 
 
 def _grant(engine, person, pkp, agent, **c):

@@ -1,44 +1,41 @@
-# Mandate v0.3.0
+# Mandate v0.4.0
 
 Enforcement gateway for AI-agent grants.
 
-An agent cannot call a protected upstream unless the gateway has a currently valid principal authorization.
+An agent cannot call a protected upstream unless the gateway has a currently valid principal authorization — and cannot reach the gateway at all without a key.
 
-## What v0.3.0 adds
+## What v0.4.0 adds
 
-- **Operations.** A route declares, per signed action, which method, path and body fields may leave the gateway. The agent chooses values, never names, and never a destination.
-- **Request binding.** The enforcer builds the body, hashes it, and signs that hash into the receipt *before* the request is sent. A receipt states what was sent, not merely what was authorized.
-- Selected `context` keys can be forwarded, scalars only, each declared by the operation. A declared field is required; an undeclared one never travels.
-- The executor sends exactly the hashed bytes, so the receipt hash and the wire bytes cannot drift apart.
-- `allowed_methods` / `allowed_paths` are authoritative again: an operation cannot widen them, and a bad route configuration raises at construction.
+- **Transport authentication.** Every endpoint but `/health` requires `Authorization: Bearer mk_<id>_<secret>`. Only the SHA-256 of the secret is stored, comparison is constant time, and an unknown key id takes the same path as a wrong secret.
+- **Tenancy.** Principals, agents, grants, receipts, nonces and routes belong to a tenant; the key decides which one. Another tenant's record reads as *absent*, never as forbidden, so a valid key cannot be used to confirm that an id exists.
+- **Rate limiting.** A per-key token bucket, answering 429 with `Retry-After`.
+- `create_app()` refuses to build an unauthenticated gateway. That has to be chosen out loud with `auth=OpenAccess()`.
 
-```python
-Route(
-    audience="mandate://procurement",
-    base_url="https://api.example.com",
-    allowed_methods=("POST",),
-    allowed_paths=("/orders",),
-    operations=(
-        Operation(
-            action="purchase.office",
-            method="POST",
-            path="/orders",
-            fields=("action", "amount_minor", "currency", "execution_id"),
-            context_fields=("sku",),
-        ),
-    ),
-)
+```bash
+mandate keys new --tenant acme --name ci --scopes intents:write,receipts:read
+# token is printed once and is not recoverable
+
+curl -H "Authorization: Bearer mk_..." -X POST http://localhost:8000/v1/intents \
+     -d '{"intent": {...}}'
 ```
 
-A route with no declared operations keeps the pre-0.3 body and dispatches to the first registered method and path.
+Scopes: `intents:write`, `approvals:write`, `receipts:read`, or `*`.
+401 = no or invalid key, 403 = valid key without the scope, 404 = not yours,
+429 = over the limit.
+
+Single-tenant deployments are unaffected: every engine method takes a `tenant`
+that defaults to `"default"`.
+
+## What v0.3.0 established
+
+- Operations: a route declares, per signed action, the method, path and body fields that may leave the gateway
+- Request binding: the body is hashed and the hash signed into the receipt *before* the request is sent
 
 ## What v0.2.2 established
 
 - Exact money: amounts are integer minor units end to end, never floats
-- Amounts finer than the currency (0.001 EUR, 0.5 JPY) are refused, not rounded
 - The execution claim is signed as `EXECUTING`, so a stored receipt never reports `AUTHORIZED` for a request that was already dispatched
-- An executor that raises ends as `EXECUTION_UNKNOWN` instead of leaving the receipt stuck
-- `Engine.reconcile_stale_executions()` closes out claims whose process died; the gateway runs it at startup
+- `Engine.reconcile_stale_executions()` closes out claims whose process died
 
 ## What v0.2.1 established
 
@@ -47,17 +44,15 @@ A route with no declared operations keeps the pre-0.3 body and dispatches to the
 - Stable budget-day binding: spend uses the authorization day, not the execution clock
 - Default-public destination policy; private networks require server-side opt-in
 - Pre-buffer request body limit at the ASGI boundary (single 413)
-- State machine with revalidating human approval
-- Approval never jumps to EXECUTED
-- Server-side route registry — no client target URL
-- Redirects are not followed
+- State machine with revalidating human approval; approval never jumps to EXECUTED
+- Server-side route registry — no client target URL; redirects are not followed
 - Enforcer-signed execution receipts
 
 ## What this does not do
 
 MCP, A2A, EUDI, wallets, UI, subdelegation, organization credentials, marketplace, payments, perfect exactly-once HTTP.
 
-Transport authentication, multi-tenancy, rate limiting and a tamper-evident receipt chain are not implemented. The gateway trusts everything that can reach it to be a legitimate caller of signed objects. Routes are configured in code, not from a file or an admin API.
+A tamper-evident receipt chain, a KMS key provider, route and key configuration outside code and CLI, and nonce pruning are not implemented.
 
 ## Known limitations
 
@@ -65,7 +60,9 @@ HTTPS DNS TOCTOU remains: hostname resolution is reused for SNI and certificate 
 
 The receipt binds the request body the gateway *committed to sending*. It does not prove the upstream received those bytes; only the response hash speaks to that.
 
-On timeout or an unknown executor error the state is `EXECUTION_UNKNOWN` and the reservation is kept. Reconciling it is a human decision; the gateway will not silently free the budget.
+The rate limiter is in-process, so it bounds one gateway process. That matches a ledger that is a single SQLite file on one node.
+
+On timeout or an unknown executor error the state is `EXECUTION_UNKNOWN` and the reservation is kept. Reconciling it is a human decision.
 
 ## Money
 
@@ -79,4 +76,4 @@ An intent may also declare `"amount_minor": 1230`; if it does, it must agree.
 python3 -m pytest tests/ -q
 ```
 
-Gateway: GET /health, POST /v1/intents, POST /v1/approvals, GET /v1/receipts/{id}
+Gateway: GET /health, GET /v1/info, POST /v1/intents, POST /v1/approvals, GET /v1/receipts/{id}
