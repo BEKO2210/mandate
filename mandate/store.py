@@ -57,17 +57,9 @@ class Store:
     def get_receipt(self, receipt_id: str) -> dict[str, Any] | None:
         return self._read(f"receipts/{receipt_id}.json")
 
-    def add_spend(self, grant_id: str, currency: str, amount: float, day: str | None = None) -> None:
-        day = day or _today()
-        ledger = self._read("spend/ledger.json") or {}
-        key = f"{grant_id}:{currency}:{day}"
-        ledger[key] = float(ledger.get(key, 0.0)) + amount
-        self._write("spend/ledger.json", ledger)
-
-    def spent_today(self, grant_id: str, currency: str, day: str | None = None) -> float:
-        day = day or _today()
-        ledger = self._read("spend/ledger.json") or {}
-        return float(ledger.get(f"{grant_id}:{currency}:{day}", 0.0))
+    # Spend accounting lives in the SQLite ledger in integer minor units.
+    # The float-based helpers that used to sit here were removed in 0.2.2 so
+    # no second, inexact money path can come back.
 
     def consume_nonce(self, nonce: str, audience: str) -> bool:
         if not nonce:

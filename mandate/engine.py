@@ -10,10 +10,12 @@ from uuid import uuid4
 
 from . import disclosure as disc
 from .crypto import KeyPair, iso, sign_object, utcnow, verify_object
+from .executor import ExecutionResult
 from .keys import EphemeralKeyProvider, KeyProvider, PersistedDevKeyProvider
 from .ledger import Ledger, StorageError
 from .models import AgentCard, Constraint, Grant, Intent, Principal, Receipt, new_id
-from .policy import evaluate
+from .money import MoneyError
+from .policy import constraint_minor, evaluate, intent_amount_minor
 from .routes import RouteRegistry
 from .states import InvalidTransition
 from .validate import (
@@ -22,11 +24,15 @@ from .validate import (
     reject_forbidden,
     require_action,
     require_amount,
+    require_amount_agreement,
     require_audience,
     require_currency,
     require_did,
     require_nonce,
 )
+
+# A claimed execution older than this is no longer in flight in this process.
+DEFAULT_EXECUTION_STALE_AFTER_S = 900
 
 
 class MandateError(Exception):
@@ -82,6 +88,7 @@ class Engine:
         routes: RouteRegistry | None = None,
         executor=None,
         clock=None,
+        execution_stale_after_s: int = DEFAULT_EXECUTION_STALE_AFTER_S,
     ) -> None:
         if ledger is not None:
             self.ledger = ledger
@@ -108,6 +115,7 @@ class Engine:
         self.executor = executor
         self._store = store
         self.clock = clock or utcnow
+        self.execution_stale_after_s = execution_stale_after_s
 
     def _now(self):
         return self.clock()
@@ -200,8 +208,9 @@ class Engine:
             require_action(body["action"])
             require_audience(body.get("audience") or "mandate://local")
             require_nonce(body.get("nonce") or "")
-            require_currency(body.get("currency") or "EUR")
-            require_amount(body.get("amount"))
+            currency = require_currency(body.get("currency") or "EUR")
+            amount_minor = require_amount(body.get("amount"), currency)
+            require_amount_agreement(body, amount_minor)
             check_freshness(body.get("created_at") or iso(utcnow()))
         except (ValidationError, KeyError) as exc:
             raise MandateError(f"invalid intent: {exc}") from exc
@@ -232,18 +241,23 @@ class Engine:
                     raise MandateError("unknown agent")
 
                 spent = tx.spent(grant.id, intent.currency, self._day())
-                decision = evaluate(grant, intent, spent_today=spent)
+                decision = evaluate(grant, intent, spent_today_minor=spent)
                 budget_day = None
 
                 if decision.requires_human:
                     state = "HUMAN_REQUIRED"
                     tx.audit("intent.human_required", {"receipt_id": receipt_id}, intent.id)
                 elif decision.allowed:
-                    cap = (grant.constraints or {}).get("max_daily_amount")
-                    cap_f = float(cap) if cap is not None else None
-                    amt = intent.amount or 0.0
+                    # An intent without an amount reserves nothing, so a
+                    # malformed cap must not turn it into an error.
+                    amt = amount_minor or 0
+                    cap_minor = (
+                        constraint_minor(grant.constraints, "max_daily_amount", intent.currency)
+                        if intent.amount is not None
+                        else None
+                    )
                     budget_day = self._day()
-                    if not tx.reserve(grant.id, intent.currency, budget_day, amt, cap_f):
+                    if not tx.reserve(grant.id, intent.currency, budget_day, amt, cap_minor):
                         decision.allowed = False
                         decision.reasons = ["budget reservation failed"]
                         state = "DENIED"
@@ -278,6 +292,8 @@ class Engine:
                 )
                 rec.id = receipt_id
                 signed_body = rec.to_dict()
+                if amount_minor is not None:
+                    signed_body["amount_minor"] = amount_minor
                 if budget_day:
                     signed_body["budget_day"] = budget_day
                 signed_receipt = sign_object(self.enforcer, signed_body)
@@ -291,6 +307,7 @@ class Engine:
                         "nonce": intent.nonce,
                         "action": intent.action,
                         "amount": intent.amount,
+                        "amount_minor": amount_minor,
                         "currency": intent.currency,
                         "state": state,
                         "execution_id": None,
@@ -413,7 +430,7 @@ class Engine:
                 grant = _grant_from_doc(grant_doc)
                 intent = _intent_from_signed(intent_doc)
                 spent = tx.spent(grant.id, intent.currency, self._day())
-                decision = evaluate(grant, intent, spent_today=spent, skip_human=True)
+                decision = evaluate(grant, intent, spent_today_minor=spent, skip_human=True)
                 if not decision.allowed:
                     new_body = {k: v for k, v in body.items() if k != "proof"}
                     new_body["decision"] = decision.to_dict()
@@ -425,11 +442,17 @@ class Engine:
                     tx.audit("approval.rejected", {"reason": decision.reasons}, a.get("approval_id"))
                     return signed
 
-                cap = (grant.constraints or {}).get("max_daily_amount")
-                cap_f = float(cap) if cap is not None else None
-                amt = intent.amount or 0.0
+                try:
+                    amt = intent_amount_minor(intent) or 0
+                    cap_minor = (
+                        constraint_minor(grant.constraints, "max_daily_amount", intent.currency)
+                        if intent.amount is not None
+                        else None
+                    )
+                except MoneyError as exc:
+                    raise MandateError(f"inexact amount: {exc}") from exc
                 budget_day = self._day()
-                if not tx.reserve(grant.id, intent.currency, budget_day, amt, cap_f):
+                if not tx.reserve(grant.id, intent.currency, budget_day, amt, cap_minor):
                     new_body = {k: v for k, v in body.items() if k != "proof"}
                     new_body["decision"] = {"allowed": False, "reasons": ["budget reservation failed"], "requires_human": False}
                     new_body["outcome"] = "DENIED"
@@ -446,6 +469,8 @@ class Engine:
                 }
                 new_body["outcome"] = "AUTHORIZED"
                 new_body["budget_day"] = budget_day
+                if intent.amount is not None:
+                    new_body["amount_minor"] = amt
                 signed = sign_object(self.enforcer, new_body)
                 if not tx.cas_state(a["receipt_id"], "HUMAN_REQUIRED", "AUTHORIZED", signed):
                     raise MandateError("invalid state transition")
@@ -466,6 +491,8 @@ class Engine:
                 existing = tx.get_execution_by_receipt(receipt_id)
                 if existing:
                     row = tx.get_receipt(receipt_id)
+                    if row["state"] == "EXECUTING" and self._is_stale(existing.get("started_at")):
+                        return self._mark_unknown(tx, receipt_id, "reconciled: claim outlived its process")
                     return json.loads(row["body"])
                 row = tx.get_receipt(receipt_id)
                 if not row:
@@ -483,6 +510,12 @@ class Engine:
                 for field in ("grant_id", "agent_did", "audience", "action", "amount", "currency", "nonce"):
                     if row[field] != getattr(intent, field):
                         raise MandateError("receipt execution fields mismatch")
+                try:
+                    amount_minor = intent_amount_minor(intent) or 0
+                except MoneyError as exc:
+                    raise MandateError(f"inexact amount: {exc}") from exc
+                if row["amount_minor"] is not None and int(row["amount_minor"]) != amount_minor:
+                    raise MandateError("receipt execution fields mismatch")
                 grant_doc = tx.get_grant(body["grant_id"])
                 if not grant_doc or not verify_object(grant_doc, expected_did=body["principal_did"]):
                     raise MandateError("grant signature invalid")
@@ -492,12 +525,12 @@ class Engine:
                 binding = tx.get_budget_binding(receipt_id)
                 if not binding:
                     raise MandateError("authorization lacks budget binding")
-                if (binding["grant_id"], binding["currency"], binding["amount"]) != (
-                    intent.grant_id, intent.currency, intent.amount or 0,
+                if (binding["grant_id"], binding["currency"], binding["amount_minor"]) != (
+                    intent.grant_id, intent.currency, amount_minor,
                 ):
                     raise MandateError("budget binding mismatch")
                 # The current reservation already counts toward this day's cap.
-                spent = max(0, tx.spent(grant.id, intent.currency, binding["day"]) - binding["amount"])
+                spent = max(0, tx.spent(grant.id, intent.currency, binding["day"]) - binding["amount_minor"])
                 approval = tx.get_approval_by_receipt(receipt_id)
                 human_approved = False
                 if approval and approval["consumed"]:
@@ -507,14 +540,14 @@ class Engine:
                         and approval_body.get("receipt_id") == receipt_id
                         and approval_body.get("intent_id") == intent.id
                     )
-                decision = evaluate(grant, intent, spent_today=spent, skip_human=human_approved)
+                decision = evaluate(grant, intent, spent_today_minor=spent, skip_human=human_approved)
                 if not decision.allowed:
                     denied = {k: v for k, v in body.items() if k != "proof"}
                     denied.update(outcome="DENIED", decision=decision.to_dict())
                     signed = sign_object(self.enforcer, denied)
                     if not tx.cas_state(receipt_id, "AUTHORIZED", "DENIED", signed):
                         raise MandateError("authorization already consumed")
-                    tx.release_budget(grant.id, intent.currency, binding["day"], binding["amount"])
+                    tx.release_budget(grant.id, intent.currency, binding["day"], binding["amount_minor"])
                     tx.audit("execution.denied", {"receipt_id": receipt_id, "reasons": decision.reasons}, receipt_id)
                     return signed
                 audience = row["audience"]
@@ -527,10 +560,27 @@ class Engine:
                 if prior:
                     r2 = tx.get_receipt(prior["receipt_id"])
                     return json.loads(r2["body"])
-                if not tx.cas_state(receipt_id, "AUTHORIZED", "EXECUTING", body):
+                # The claim is signed as EXECUTING. If this process dies here,
+                # the stored receipt states what actually happened instead of
+                # still claiming AUTHORIZED.
+                started = iso(self._now())
+                claim = {k: v for k, v in body.items() if k != "proof"}
+                claim["outcome"] = "EXECUTING"
+                claim["execution"] = {
+                    "execution_id": execution_id,
+                    "state": "EXECUTING",
+                    "idempotency_key": idem,
+                    "enforcer_did": self.enforcer_did,
+                    "predecessor_id": receipt_id,
+                    "started_at": started,
+                }
+                signed_claim = sign_object(self.enforcer, claim)
+                if not tx.cas_state(receipt_id, "AUTHORIZED", "EXECUTING", signed_claim):
                     raise MandateError("authorization already consumed")
                 tx.set_execution(receipt_id, execution_id)
-                tx.put_execution(execution_id, receipt_id, idem, "EXECUTING", {"started": iso(utcnow())})
+                tx.put_execution(
+                    execution_id, receipt_id, idem, "EXECUTING", {"started": started}, started_at=started
+                )
                 tx.audit("execution.started", {"execution_id": execution_id, "receipt_id": receipt_id}, receipt_id)
         except StorageError as exc:
             raise MandateError("storage error") from exc
@@ -541,7 +591,14 @@ class Engine:
             "currency": row["currency"],
             "execution_id": execution_id,
         }
-        result = executor.forward(route, route.allowed_methods[0], route.allowed_paths[0], payload, idem)
+        try:
+            result = executor.forward(route, route.allowed_methods[0], route.allowed_paths[0], payload, idem)
+        except Exception as exc:
+            # The request may or may not have reached the upstream. Anything
+            # other than EXECUTION_UNKNOWN would be a claim we cannot support.
+            result = ExecutionResult(
+                "EXECUTION_UNKNOWN", None, 0, None, f"executor error: {type(exc).__name__}"
+            )
 
         try:
             with self.ledger.tx() as tx:
@@ -564,12 +621,16 @@ class Engine:
                 dst = result.state
                 if not tx.cas_state(receipt_id, "EXECUTING", dst, signed):
                     raise MandateError("invalid state transition")
-                amt = float(row["amount"] or 0)
                 binding = tx.get_budget_binding(receipt_id)
                 if binding:
-                    gid, curr, day, bamt = binding["grant_id"], binding["currency"], binding["day"], float(binding["amount"])
+                    gid, curr, day, bamt = (
+                        binding["grant_id"], binding["currency"], binding["day"], binding["amount_minor"],
+                    )
                 else:
-                    gid, curr, day, bamt = row["grant_id"], row["currency"] or "EUR", self._day(), amt
+                    gid = row["grant_id"]
+                    curr = row["currency"] or "EUR"
+                    day = self._day()
+                    bamt = int(row["amount_minor"] or 0)
                 if result.state == "EXECUTED":
                     tx.commit_budget(gid, curr, day, bamt)
                     tx.audit("execution.succeeded", {"execution_id": execution_id, "budget_day": day}, receipt_id)
@@ -582,3 +643,53 @@ class Engine:
                 return signed
         except StorageError as exc:
             raise MandateError("storage error") from exc
+
+    def _is_stale(self, started_at: str | None) -> bool:
+        cutoff = self._now() - timedelta(seconds=self.execution_stale_after_s)
+        if not started_at:
+            # A claim without a recorded start predates this column and cannot
+            # be shown to be in flight.
+            return True
+        return started_at < iso(cutoff)
+
+    def _mark_unknown(self, tx, receipt_id: str, reason: str) -> dict[str, Any]:
+        """EXECUTING -> EXECUTION_UNKNOWN. The reservation is kept on purpose."""
+        row = tx.get_receipt(receipt_id)
+        body = json.loads(row["body"])
+        new_body = {k: v for k, v in body.items() if k != "proof"}
+        new_body["outcome"] = "EXECUTION_UNKNOWN"
+        execution = dict(new_body.get("execution") or {})
+        execution.update(state="EXECUTION_UNKNOWN", error=reason, reconciled_at=iso(self._now()))
+        new_body["execution"] = execution
+        signed = sign_object(self.enforcer, new_body)
+        if not tx.cas_state(receipt_id, "EXECUTING", "EXECUTION_UNKNOWN", signed):
+            raise MandateError("invalid state transition")
+        prior = tx.get_execution_by_receipt(receipt_id)
+        if prior:
+            tx.put_execution(
+                prior["id"], receipt_id, prior["idempotency_key"], "EXECUTION_UNKNOWN", execution
+            )
+        tx.audit("execution.reconciled", {"receipt_id": receipt_id, "reason": reason}, receipt_id)
+        return signed
+
+    def reconcile_stale_executions(self, stale_after_s: int | None = None) -> list[str]:
+        """Close out executions whose claiming process never came back.
+
+        A receipt left in EXECUTING is not terminal and blocks its reservation
+        forever. Whether the upstream saw the request is unknowable from here,
+        so the honest terminal state is EXECUTION_UNKNOWN and the reservation
+        stays held until a human reconciles it.
+        """
+        seconds = self.execution_stale_after_s if stale_after_s is None else stale_after_s
+        cutoff = iso(self._now() - timedelta(seconds=seconds))
+        reconciled: list[str] = []
+        try:
+            with self.ledger.tx() as tx:
+                for stale in tx.stale_executions(cutoff):
+                    self._mark_unknown(
+                        tx, stale["receipt_id"], "reconciled: claim outlived its process"
+                    )
+                    reconciled.append(stale["receipt_id"])
+        except StorageError as exc:
+            raise MandateError("storage error") from exc
+        return reconciled

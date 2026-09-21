@@ -22,9 +22,37 @@ Covered by G45–G52.
 
 Covered by G53–G57.
 
+## SH-04 — Money must be exact — DONE in v0.2.2
+
+Float amounts decided caps wrongly: 0.10 + 0.20 against a 0.30 daily cap was
+denied, and ten 0.10 reservations against a 1.00 cap accumulated to
+0.9999999999999999. Amounts, constraints and budgets are now integer minor
+units (`mandate/money.py`), converted once at the validation boundary from the
+same decimal text the signature covers. An amount finer than the currency is
+refused rather than rounded into a budget. Ledger schema version 2 converts
+legacy float rows half-up, once, on first open.
+
+Covered by G58-G63 and G68.
+
+## SH-05 — A claimed execution must reach a terminal state — DONE in v0.2.2
+
+`AUTHORIZED -> EXECUTING` stored the previous signed body, so the ledger said
+EXECUTING while the receipt said AUTHORIZED, and a retry returned that body for
+a request that may already have been dispatched. The claim is now signed as
+EXECUTING. Any exception out of the executor becomes EXECUTION_UNKNOWN with the
+reservation kept, and `Engine.reconcile_stale_executions()` closes out claims
+whose process died; the gateway runs it at startup.
+
+Covered by G64-G67.
+
 ## Residual / next
 
 - HTTPS DNS TOCTOU (check then connect by name)
 - No connection-level IP pin for TLS
-- IPv4-mapped addresses are unwrapped before policy checks
-- Do not add MCP, A2A, EUDI, subdelegation, UI, marketplace, or payment-network work in this hardening round
+- No transport authentication, multi-tenancy or rate limiting on the gateway
+- Receipts are individually signed but not chained; an operator with database
+  access can delete or roll back history
+- Only `allowed_methods[0]` and `allowed_paths[0]` are dispatched, and the
+  intent's `context` is not forwarded, so the request body is not bound into
+  the receipt
+- Reconciling an EXECUTION_UNKNOWN reservation is still a manual decision

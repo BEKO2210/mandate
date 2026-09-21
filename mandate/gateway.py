@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request
@@ -26,12 +27,19 @@ class ApprovalEnvelope(BaseModel):
 
 
 def create_app(engine: Engine) -> FastAPI:
-    app = FastAPI(title="Mandate Enforcement Gateway", version="0.2.1")
+    @asynccontextmanager
+    async def lifespan(instance: FastAPI):
+        # A process that died mid-execution leaves receipts in EXECUTING.
+        # They are closed out as EXECUTION_UNKNOWN before serving traffic.
+        instance.state.reconciled = engine.reconcile_stale_executions()
+        yield
+
+    app = FastAPI(title="Mandate Enforcement Gateway", version="0.2.2", lifespan=lifespan)
     app.state.engine = engine
 
     @app.get("/health")
     def health():
-        return {"ok": True, "enforcer_did": engine.enforcer_did, "version": "0.2.1"}
+        return {"ok": True, "enforcer_did": engine.enforcer_did, "version": "0.2.2"}
 
     @app.post("/v1/intents")
     def post_intent(env: IntentEnvelope):
