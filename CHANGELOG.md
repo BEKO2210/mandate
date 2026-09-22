@@ -3,6 +3,45 @@
 All notable changes to this project are documented here.
 This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] — 2026-09-22
+
+### Added
+
+- **MCP guard.** `mandate mcp serve` puts Mandate between a model and an
+  existing MCP server: the upstream's tools are re-exposed with their own
+  schemas, and every call becomes a signed intent evaluated against a grant
+  before it is dispatched. The model's side does not change. Gates G112-G119.
+- `mandate/mcp/mapping.py` decides, server-side, what each tool counts as and
+  which argument carries money. An unmapped tool is not exposed at all, so the
+  surface a model sees is the surface the configuration considered. Gates
+  G101-G106, G115, G117.
+- `McpExecutor` dispatches an authorized call over MCP with the same contract
+  as the HTTP executor: a tool error is `EXECUTION_FAILED`, a broken transport
+  is `EXECUTION_UNKNOWN` with the reservation kept. Gates G107-G111, G116.
+- `mandate mcp init` creates the principal, agent and grant, scoping the grant
+  to exactly the mapped actions. Gates G117, G118.
+- Optional extra: `pip install "mandate[mcp]"`.
+
+### Changed
+
+- `ExecutionResult` can carry the upstream's response in-process. Only its hash
+  is signed into the receipt; the content itself is handed to the caller beside
+  the receipt and never persisted. Gate G112.
+- `Operation.max_string` lets one operation raise the forwarded-string limit
+  above the global default. The limit stays server-side, and the total body cap
+  is unchanged.
+- **`MAX_CONTEXT_BYTES` is enforced.** It was declared from the first release
+  and never checked, so an intent's context was bounded only by the 32 KiB body
+  limit. It is now validated against the canonical bytes that get signed.
+  Gate G104.
+
+### Still open
+
+A KMS key provider, route configuration outside code, nonce pruning, a
+tamper-evident receipt chain, and the HTTPS DNS TOCTOU residual. The guard
+holds the agent key, so its process is the enforcement boundary — see
+`docs/MCP.md`.
+
 ## [0.4.0] — 2026-09-21
 
 ### Added

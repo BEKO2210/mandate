@@ -6,7 +6,7 @@ from .engine import Engine
 from .models import AgentCard, Constraint, Grant, Intent, Principal
 from .policy import evaluate
 
-__version__ = "0.4.0"
+__version__ = "0.5.0"
 __all__ = [
     "Engine",
     "OpenAccess",

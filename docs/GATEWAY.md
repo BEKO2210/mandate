@@ -35,3 +35,7 @@ them afterwards.
 Routes declare operations per signed action. The agent supplies values; the
 server supplies method, path and field names. The request body is hashed and
 signed into the receipt before it is sent.
+
+The same engine can sit in front of an MCP server instead of an HTTP upstream;
+the tool call replaces the request and the receipts are identical. See
+`docs/MCP.md`.

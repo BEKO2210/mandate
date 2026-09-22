@@ -28,6 +28,7 @@ from .validate import (
     require_amount,
     require_amount_agreement,
     require_audience,
+    require_context,
     require_currency,
     require_did,
     require_nonce,
@@ -236,6 +237,7 @@ class Engine:
             currency = require_currency(body.get("currency") or "EUR")
             amount_minor = require_amount(body.get("amount"), currency)
             require_amount_agreement(body, amount_minor)
+            require_context(body.get("context"))
             check_freshness(body.get("created_at") or iso(utcnow()))
         except (ValidationError, KeyError) as exc:
             raise MandateError(f"invalid intent: {exc}") from exc
