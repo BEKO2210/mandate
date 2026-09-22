@@ -3,6 +3,77 @@
 All notable changes to this project are documented here.
 This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.0] — 2026-09-22
+
+Every gap the previous releases listed as open, closed or bounded. Each fix
+was reproduced against the old code first and is pinned by gates that fail
+against it (G202–G236).
+
+### Security
+
+- **HTTPS reached addresses the destination policy never approved.** The
+  name was resolved for the check and again by httpx for the connection; a
+  resolver that changed its answer sent an authorized request to an internal
+  peer. TLS did not prevent it — whoever controls a name's DNS can hold a
+  certificate for it. Both schemes now connect to the checked address; the
+  name is used for SNI, certificate verification and `Host`. (G202–G203)
+- **An environment proxy bypassed the destination policy.** With
+  `HTTPS_PROXY` set, the proxy resolved the name itself. Proxy variables are
+  ignored. (G204) Certificate verification cannot be disabled; a private CA
+  bundle is loaded at startup. (G205)
+- **A `base_url` path prefix was dropped when connecting** — `…/v2` + `/orders`
+  went to `/orders`, while the receipt named `/v2/orders`. Present for HTTP on
+  0.8.x. (G212)
+- **The MCP guard ignored unknown configuration keys**, so a misspelt
+  `max_daily_amount` issued a grant with no daily limit. Both configuration
+  files are now read strictly, duplicates included. (G214, G217)
+- **An intent without `created_at` was fresh forever**, defended only by a
+  nonce kept forever. `created_at` is required. (G234)
+
+### Added
+
+- `mandate gateway check|serve --config` runs the HTTP gateway from one JSON
+  file: routes, operations, enforcer signer, auth, rate limit, CA bundle,
+  anchoring. `--workers N` shares one ledger. (G213, G215, G216, G219)
+- `principal_signer` for the MCP guard: the grant-issuing key can stay in a
+  key manager; `mcp init` then writes no principal key. (G218)
+- `Engine.resolve_unknown`, `mandate gateway|mcp unknown` and `… resolve`:
+  an operator's finding about an `EXECUTION_UNKNOWN` receipt is signed and
+  chained into it, and the reservation is committed or released. The state
+  machine allows exactly `EXECUTION_UNKNOWN → EXECUTED | EXECUTION_FAILED`.
+  (G220–G222, G224)
+- `mandate chain anchor --witness URL` and the gateway's `anchoring` block
+  post chain heads to an external witness; workers share the schedule. Every
+  failure is loud. (G229–G232)
+- `LedgerRateLimiter`, the gateway's default: one bucket per key across every
+  worker serving a ledger. (G207–G210)
+
+### Fixed
+
+- **A transaction that failed to begin kept the ledger lock**, hanging every
+  later transaction on other threads — reachable as soon as several processes
+  share the file and one gets `database is locked`. (G211)
+- **Nothing is sent whose outcome the enforcer cannot sign.** With AWS KMS's
+  4096-byte cap, an unbounded upstream error pushed the result receipt past
+  it after dispatch; the outcome was lost and the receipt stayed EXECUTING.
+  Error text is bounded to 200 one-byte characters, and an execution whose
+  receipt could outgrow the signer is DENIED before anything is sent.
+  (G226–G228)
+- **Settlement of receipts from before budget bindings used today's date.**
+  It now uses the recorded day or one the operator names, never a guess.
+  (G223, G225)
+- Nonces are pruned once the intents carrying them are stale, instead of
+  being kept forever. (G233)
+- `/v1/info` reported version 0.5.0; it now reports the package version, and
+  README, changelog and pyproject are pinned to it. (G235–G236)
+- The repository is lint-clean and CI runs a pinned ruff. A
+  `DeprecationWarning` from this package fails the suite.
+
+### Changed
+
+- An intent must carry `created_at`.
+- `mandate chain anchor` takes `--file`, `--witness` or both.
+
 ## [0.8.1] — 2026-09-22
 
 ### Fixed

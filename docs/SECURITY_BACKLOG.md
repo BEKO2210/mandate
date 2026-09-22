@@ -224,6 +224,19 @@ or stops the gateway from starting.
 
 Covered by G229–G232.
 
+## SH-15 — Replay protection must not need infinite memory — DONE in v0.9.0
+
+Every consumed nonce was kept forever. Pruning is safe only once the intent
+carrying a nonce can no longer pass the freshness check — and an intent
+without `created_at` passed it forever, because a missing value was read as
+"now". `created_at` is now required, and a nonce is dropped once it is older
+than the freshness window plus clock skew plus a minute.
+
+`/v1/info` also reported version 0.5.0 through four releases; it reads the
+package version now, and the README, changelog and pyproject are pinned to it.
+
+Covered by G233–G236.
+
 ## Residual / next
 
 - A chain cannot prove what was removed from its own end; truncation is only

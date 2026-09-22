@@ -19,7 +19,7 @@
         <svg class="mark" viewBox="0 0 32 32" width="22" height="22" aria-hidden="true">
           <path d="M9 8v16M23 8v16M13 13h6v6h-6z" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="square"/>
         </svg>
-        <span>Mandate</span><span class="ver">v0.8.1</span>
+        <span>Mandate</span><span class="ver">v0.9.0</span>
       </a>
       <nav class="links" id="nav-links">
         <a href="#diagram">Architecture</a>
@@ -40,7 +40,7 @@
     <section class="hero" id="top">
       <div class="wrap hero-grid">
         <div>
-          <p class="eyebrow">Enforcement gateway · 256 gates passing</p>
+          <p class="eyebrow">Enforcement gateway · 260 gates passing</p>
           <h1>Authorization<br />before execution.</h1>
           <p class="lead">Mandate sits in front of protected tools. An AI agent may propose an action. It does not execute until a signed, scoped, budget-aware grant has been verified — and every outcome becomes a receipt that cannot be edited without showing it.</p>
           <div class="actions">
@@ -111,7 +111,7 @@
 
     <section id="chain">
       <div class="wrap">
-        <p class="kicker">Receipt chain · v0.7.0 &ndash; v0.8.0</p>
+        <p class="kicker">Receipt chain · v0.7.0 &ndash; v0.9.0</p>
         <h2>History you cannot<br />edit quietly.</h2>
         <p class="section-lead">A signed receipt proves who wrote it. It proves nothing about the <em>set</em> of receipts — an operator with database access could delete a row and every remaining signature still verified. Each state a receipt reaches now appends an enforcer-signed entry that commits to the one before it.</p>
         <div class="sec-grid">
@@ -128,7 +128,7 @@ longer reaches it
 <span class="muted">$ echo $?  &rarr; 1</span></pre>
           </div>
           <div class="status-list">
-            <article><header><strong>Anchors</strong><span class="tag tag-ok">v0.8.0</span></header><p>A prefix of a valid chain is a valid chain, so truncation is invisible from inside a database. <code>chain anchor</code> writes heads to a file kept elsewhere; <code>--anchors</code> checks them.</p></article>
+            <article><header><strong>Anchors, sent to a witness</strong><span class="tag tag-ok">v0.9.0</span></header><p>A prefix of a valid chain is a valid chain, so truncation is invisible from inside a database. The gateway posts its heads to a witness someone else runs, on a schedule; <code>--anchors</code> checks them. A witness that does not accept is a failure, never a silence.</p></article>
             <article><header><strong>Key rotation</strong><span class="tag tag-ok">v0.8.0</span></header><p>The rotation entry is signed by the key being replaced, so a stolen key cannot appoint itself or reach back past the rotation.</p></article>
             <article><header><strong>Legal roads</strong><span class="tag tag-ok">v0.8.0</span></header><p>The states a receipt passed through are checked against the state machine, not only its destination.</p></article>
             <article><header><strong>Verification needs no key</strong><span class="tag tag-ok">v0.7.0</span></header><p>The person who most needs to check a chain is the one who does not trust whoever runs it.</p></article>
@@ -151,6 +151,8 @@ longer reaches it
           <article><h3>Keys that never enter the process</h3><p>AWS KMS, GCP Cloud KMS and Vault sign without handing the key back.</p></article>
           <article><h3>Authenticated and tenant-scoped</h3><p>Every call carries an API key. A tenant never sees another tenant's records.</p></article>
           <article><h3>In front of MCP tools</h3><p>The guard re-exposes an MCP server's tools and authorizes every call.</p></article>
+          <article><h3>One file, read strictly</h3><p>Routes, signers, limits and anchoring come from one configuration. A misspelt key is an error, never a default.</p></article>
+          <article><h3>Unknown outcomes, settled on the record</h3><p>An operator who asked the upstream resolves EXECUTION_UNKNOWN. Who decided and why is signed into the receipt.</p></article>
         </div>
       </div>
     </section>
@@ -159,25 +161,26 @@ longer reaches it
       <div class="wrap">
         <p class="kicker">Hardening status</p>
         <h2>Proven as behavior,<br />not as copy.</h2>
-        <p class="section-lead">256 gates, written as the attacks rather than as the features, passing on Python 3.11, 3.12 and 3.13 from a clean clone.</p>
+        <p class="section-lead">260 gates, written as the attacks rather than as the features, passing on Python 3.11, 3.12 and 3.13 from a clean clone.</p>
         <div class="sec-grid">
           <div class="terminal">
             <div class="termbar">pytest · fresh clone</div>
             <pre><span class="muted">$</span> pytest -q
-<span class="ok">256 passed</span>
+<span class="ok">260 passed</span>
 
 <span class="ok">G165 PASS</span>  Deleted receipt row
-<span class="ok">G182 PASS</span>  Fabricated receipt
-<span class="ok">G191 PASS</span>  Impossible state road
 <span class="ok">G193 PASS</span>  Truncation vs. anchor
-<span class="ok">G196 PASS</span>  Rewrite after rotation</pre>
+<span class="ok">G202 PASS</span>  DNS answers twice
+<span class="ok">G207 PASS</span>  Four workers, one limit
+<span class="ok">G220 PASS</span>  Unknown outcome, resolved
+<span class="ok">G226 PASS</span>  Unsignable outcome</pre>
           </div>
           <div class="status-list">
-            <article><header><strong>SH-01 Budget-day binding</strong><span class="tag tag-ok">Closed</span></header><p>Authorization-day binding persists across midnight.</p></article>
-            <article><header><strong>SH-02 Destination policy</strong><span class="tag tag-ok">Closed</span></header><p>Agent-controlled policy overrides are forbidden.</p></article>
-            <article><header><strong>SH-03 Body-limit protocol</strong><span class="tag tag-ok">Closed</span></header><p>Only a single 413 is written.</p></article>
-            <article><header><strong>SH-08 Signing keys</strong><span class="tag tag-ok">Closed</span></header><p>A key manager answers without handing the key back.</p></article>
-            <article><header><strong>DNS rebinding at connect</strong><span class="tag tag-ok">Closed</span></header><p>HTTPS connects to the address the policy checked; G202.</p></article>
+            <article><header><strong>Policy held at the socket</strong><span class="tag tag-ok">Closed</span></header><p>HTTPS connects to the address the destination policy checked, and no environment proxy re-resolves it. G202, G204.</p></article>
+            <article><header><strong>One limit across workers</strong><span class="tag tag-ok">Closed</span></header><p>The rate limit lives in the ledger, so four workers do not mean four times the limit. G207.</p></article>
+            <article><header><strong>Nothing sent that cannot be recorded</strong><span class="tag tag-ok">Closed</span></header><p>An execution whose receipt could outgrow the signer is refused before dispatch. G226.</p></article>
+            <article><header><strong>Typos are errors</strong><span class="tag tag-ok">Closed</span></header><p>A misspelt limit used to be dropped and the grant issued without it. G217.</p></article>
+            <article><header><strong>What the upstream received</strong><span class="tag tag-note">Known limit</span></header><p>The receipt binds the bytes the gateway sent. Only the upstream can say what arrived.</p></article>
           </div>
         </div>
       </div>
@@ -193,27 +196,36 @@ longer reaches it
             <li><code>POST /v1/approvals</code><span>Attach human approval when required.</span></li>
             <li><code>GET /v1/receipts/{id}</code><span>Read the signed receipt.</span></li>
             <li><code>GET /v1/info</code><span>Chain head for the caller's tenant.</span></li>
-            <li><code>GET /health</code><span>Gateway health and enforcer identity.</span></li>
+            <li><code>GET /health</code><span>Liveness only. Reveals nothing.</span></li>
+            <li><code>mandate gateway serve</code><span>Run it from one configuration file.</span></li>
+            <li><code>mandate gateway resolve</code><span>Settle an unknown outcome, on the record.</span></li>
           </ul>
         </div>
         <div class="codebox">
-          <div class="codehead"><span>routes.py</span><button class="copy" type="button" data-copy>Copy</button></div>
-          <pre id="snippet">Route(
-  audience="mandate://procurement",
-  base_url="https://api.example.com",
-  allowed_methods=("POST",),
-  allowed_paths=("/orders",),
-  network_policy="public",
-  operations=(
-    Operation(
-      action="purchase.office",
-      method="POST",
-      path="/orders",
-      fields=("action", "amount_minor", "currency", "execution_id"),
-      context_fields=("sku",),
-    ),
-  ),
-)</pre>
+          <div class="codehead"><span>gateway.json</span><button class="copy" type="button" data-copy>Copy</button></div>
+          <pre id="snippet">{
+  "store": "/var/lib/mandate",
+  "enforcer_signer": {
+    "kind": "vault-transit",
+    "key": "mandate"
+  },
+  "anchoring": {
+    "witness": "https://audit.example/anchors",
+    "every_s": 300
+  },
+  "routes": [{
+    "audience": "mandate://procurement",
+    "base_url": "https://erp.example.com/v2",
+    "allowed_paths": ["/orders"],
+    "operations": [{
+      "action": "purchase.office",
+      "method": "POST",
+      "path": "/orders",
+      "fields": ["action", "amount",
+                 "currency", "execution_id"]
+    }]
+  }]
+}</pre>
         </div>
       </div>
     </section>
@@ -235,7 +247,7 @@ longer reaches it
 
   <footer>
     <div class="wrap foot">
-      <span>Mandate v0.8.1 · Enforcement gateway for AI-agent grants.</span>
+      <span>Mandate v0.9.0 · Enforcement gateway for AI-agent grants.</span>
       <a href="https://github.com/BEKO2210/mandate">BEKO2210/mandate</a>
       <span class="chevrons" aria-hidden="true"><span>&gt;</span><span>&gt;</span><span>&gt;</span></span>
     </div>

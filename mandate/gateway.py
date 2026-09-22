@@ -19,11 +19,13 @@ from .auth import (
     RateLimited,
     RateLimiter,
 )
+from . import __version__
 from .engine import Engine, MandateError
 from .limits import BodyLimitMiddleware
 from .validate import ValidationError, reject_forbidden
 
-VERSION = "0.5.0"
+# Read from the package, not typed here: this said 0.5.0 through four releases.
+VERSION = __version__
 
 
 class IntentEnvelope(BaseModel):

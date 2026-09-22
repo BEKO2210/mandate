@@ -418,7 +418,12 @@ class Engine:
             amount_minor = require_amount(body.get("amount"), currency)
             require_amount_agreement(body, amount_minor)
             require_context(body.get("context"))
-            check_freshness(body.get("created_at") or iso(utcnow()))
+            # Required, not defaulted to now: an intent without a creation
+            # time was fresh forever, and only a nonce remembered forever
+            # stood between it and a replay. Nonces are pruned now.
+            if not body.get("created_at"):
+                raise ValidationError("created_at is required")
+            check_freshness(body["created_at"])
         except (ValidationError, KeyError) as exc:
             raise MandateError(f"invalid intent: {exc}") from exc
 

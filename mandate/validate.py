@@ -123,7 +123,17 @@ def require_did(value: str) -> str:
     return value
 
 
-def check_freshness(created_at: str, max_age_s: int = 300) -> None:
+#: How old an intent may be, and how far ahead of this clock it may claim to
+#: be. Together they bound how long a signed intent can be replayed, and so
+#: how long its nonce has to be remembered (see `NONCE_RETENTION_S`).
+INTENT_MAX_AGE_S = 300
+CLOCK_SKEW_S = 30
+#: A nonce consumed at t belongs to an intent created no later than t + skew,
+#: which is stale from t + skew + max age on. A minute of margin on top.
+NONCE_RETENTION_S = INTENT_MAX_AGE_S + CLOCK_SKEW_S + 60
+
+
+def check_freshness(created_at: str, max_age_s: int = INTENT_MAX_AGE_S) -> None:
     from datetime import datetime, timezone
 
     try:
@@ -131,5 +141,5 @@ def check_freshness(created_at: str, max_age_s: int = 300) -> None:
     except Exception as exc:
         raise ValidationError("invalid timestamp") from exc
     age = (utcnow() - ts).total_seconds()
-    if age > max_age_s or age < -30:
+    if age > max_age_s or age < -CLOCK_SKEW_S:
         raise ValidationError("intent not fresh")

@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import threading
+import time
 from decimal import ROUND_HALF_UP, Decimal
 from pathlib import Path
 from typing import Any
@@ -14,6 +15,7 @@ from .chain import ROTATION_ID, loads_strict
 from .crypto import iso, utcnow, verify_object
 from .money import exponent, from_minor
 from .states import assert_transition
+from .validate import NONCE_RETENTION_S
 
 
 class StorageError(Exception):
@@ -215,6 +217,15 @@ class Ledger:
             )
         if self._schema_version() < 4:
             self._migrate_start_chain()
+        nonce_cols = {row[1] for row in self._conn.execute("PRAGMA table_info(nonces)")}
+        if "consumed_at" not in nonce_cols:
+            # Rows from before this column get the migration time: they are
+            # kept one full retention window from now, never dropped early.
+            self._conn.execute("ALTER TABLE nonces ADD COLUMN consumed_at REAL")
+            self._conn.execute("UPDATE nonces SET consumed_at=?", (time.time(),))
+        self._conn.execute(
+            "CREATE INDEX IF NOT EXISTS nonces_consumed_at ON nonces(consumed_at)"
+        )
 
     def _migrate_start_chain(self) -> None:
         """Start the chain, and snapshot the receipts that predate it.
@@ -436,12 +447,24 @@ class _Tx:
         return row["tenant"] if row else None
 
     def consume_nonce(
-        self, audience: str, nonce: str, receipt_id: str, tenant: str = "default"
+        self, audience: str, nonce: str, receipt_id: str, tenant: str = "default",
+        now: float | None = None,
     ) -> bool:
+        """Record a nonce as used; False if it already was.
+
+        A nonce only has to be remembered while the intent carrying it could
+        still pass the freshness check. Older ones are dropped here, so the
+        table holds a few minutes of traffic instead of all of it.
+        """
+        now = time.time() if now is None else now
+        self.l._conn.execute(
+            "DELETE FROM nonces WHERE consumed_at < ?", (now - NONCE_RETENTION_S,)
+        )
         try:
             self.l._conn.execute(
-                "INSERT INTO nonces(tenant, audience, nonce, receipt_id) VALUES (?,?,?,?)",
-                (tenant, audience, nonce, receipt_id),
+                "INSERT INTO nonces(tenant, audience, nonce, receipt_id, consumed_at) "
+                "VALUES (?,?,?,?,?)",
+                (tenant, audience, nonce, receipt_id, now),
             )
             return True
         except sqlite3.IntegrityError:

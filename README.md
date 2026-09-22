@@ -1,8 +1,65 @@
-# Mandate v0.8.0
+# Mandate v0.9.0
 
 Enforcement gateway for AI-agent grants.
 
 An agent cannot call a protected upstream unless the gateway has a currently valid principal authorization — and cannot reach the gateway at all without a key.
+
+## What v0.9.0 adds
+
+The gaps the last releases listed as open, closed — each reproduced first,
+each pinned by gates that fail against the code before it.
+
+**Run it from one file.** The gateway used to be assembled in Python. Now:
+
+```bash
+mandate gateway check --config gateway.json   # validates, proves the signer signs
+mandate gateway serve --config gateway.json --workers 4
+```
+
+Routes, operations, enforcer signer, auth, rate limit, CA bundle and
+anchoring live in one JSON file, read strictly: an unknown key, a duplicate
+key or a wrong type is an error with its location. The MCP guard's file is
+now just as strict — a misspelt `max_daily_amount` used to be dropped and the
+grant issued with no daily limit. `principal_signer` keeps the grant-issuing
+key in a key manager. See `docs/GATEWAY.md`.
+
+**The destination policy holds at the socket.** HTTPS connected by name, so
+the name was resolved twice; a resolver that changed its answer sent an
+authorized request to an internal address, and TLS did not stop it. Both
+schemes now connect to the address that was checked. `HTTPS_PROXY` is ignored
+— a proxy resolves the name itself. A `base_url` path prefix (`…/v2`) was
+dropped on the way out; it is not any more.
+
+**One rate limit across workers.** The bucket lives in the ledger, so N
+workers no longer give a key N times its limit. Writing that exposed a ledger
+hang: a transaction that failed to begin kept its lock forever.
+
+**Unknown outcomes can be settled on the record.**
+
+```bash
+mandate gateway unknown --config gateway.json
+mandate gateway resolve --config gateway.json --receipt rcpt_… \
+    --outcome failed --by "Belkis" --reason "no order with this key in the ERP"
+```
+
+The finding is signed and chained into the receipt; the reservation is
+committed or released. Until now the only way out of `EXECUTION_UNKNOWN` was
+editing the database.
+
+**Nothing is sent whose outcome cannot be signed.** With the enforcer on AWS
+KMS (4096-byte cap), a verbose upstream error could push the result receipt
+past the cap *after* the call: the outcome was lost. Error text is bounded,
+and an execution whose receipt could outgrow the signer is refused before
+dispatch.
+
+**Heads go to a witness.** `mandate chain anchor --witness URL`, or the
+gateway's `anchoring` block on a schedule. A witness that does not accept is
+a failure, never a silence.
+
+**Smaller things that were wrong:** nonces were kept forever (now pruned once
+their intent is stale — and an intent must carry `created_at`, which used to
+default to "now" and so was fresh forever); `/v1/info` reported version 0.5.0;
+the whole repo is lint-clean, with ruff pinned in CI.
 
 ## What v0.8.0 adds
 
@@ -165,7 +222,8 @@ that defaults to `"default"`.
 
 MCP, A2A, EUDI, wallets, UI, subdelegation, organization credentials, marketplace, payments, perfect exactly-once HTTP.
 
-Route and key configuration outside code and CLI, and nonce pruning are not implemented.
+An admin API for routes and keys is not implemented; configuration is a file
+and keys are managed with `mandate keys`.
 
 ## Known limitations
 
@@ -187,6 +245,8 @@ An intent may also declare `"amount_minor": 1230`; if it does, it must agree.
 
 ```bash
 python3 -m pytest tests/ -q
+mandate gateway check --config gateway.json
+mandate gateway serve --config gateway.json --workers 4
 ```
 
 Gateway: GET /health, GET /v1/info, POST /v1/intents, POST /v1/approvals, GET /v1/receipts/{id}

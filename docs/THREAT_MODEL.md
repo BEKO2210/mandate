@@ -1,4 +1,4 @@
-# Threat model (v0.7.0)
+# Threat model (v0.9.0)
 
 TRUSTED: gateway, KeyProvider, route registry, SQLite tx layer, executor code, server-side Route.network_policy, the api_keys table.
 UNTRUSTED: agent, agent JSON, network, unsigned human input, upstream bodies, DNS answers.
@@ -6,7 +6,10 @@ ASSETS: grants, approvals, enforcer key, budgets, receipts, audit.
 
 Budget windows are bound at authorization. Execution must not move spend onto a later UTC day.
 
-DNS resolution is checked before connect. HTTP pins the checked IP. HTTPS still uses the hostname for SNI, so a resolver that changes answers between check and connect is a residual risk.
+DNS is resolved once, the address is checked, and the connection goes to that
+address for HTTP and HTTPS alike; the name is used only for SNI, certificate
+verification and `Host`. Proxy variables in the environment are ignored,
+because a proxy would resolve the name again.
 
 ## Execution-time revalidation
 
@@ -21,8 +24,18 @@ intent. Previously claimed executions remain single-use.
 
 The execution claim is the ordering boundary: revocations committed before the
 claim prevent dispatch. A revocation after the claim cannot cancel an in-flight
-HTTP operation. This change does not provide exact request-byte binding, transport
-hardening, crash reconciliation, or immutable evidence; those remain follow-ups.
+HTTP operation. Request-byte binding, crash reconciliation and the receipt
+chain are described below.
+
+## Replay
+
+An intent carries a nonce and a `created_at`; both are signed. It is accepted
+while it is at most five minutes old and at most thirty seconds ahead of the
+gateway's clock, and its nonce is accepted once per tenant and audience. A
+nonce is remembered for that window plus a minute and then forgotten, because
+by then its intent fails the freshness check anyway. `created_at` is
+required: a missing one used to be read as "now", which made that intent
+fresh forever and left an unbounded nonce table as its only defence.
 
 ## Money
 
@@ -156,13 +169,15 @@ it against the receipts it commits to. The second half is what catches a
 deleted or altered row; a chain that only verifies itself catches nothing, as
 the first implementation here demonstrated.
 
-Three limits, none of them fixable from inside the database:
+The limits, none of them fixable from inside the database:
 
 * **Truncation.** A prefix of a valid chain is a valid chain. Detecting a
   deletion from the end needs a head kept somewhere the operator does not
-  control; `/v1/info` and `mandate chain head` hand one out, and
-  `--expect-head` checks against it. Without that, the chain proves that what
-  remains was not edited, not that nothing is missing.
+  control; `/v1/info` and `mandate chain head` hand one out, the gateway's
+  `anchoring` posts them to a witness on a schedule, and `--expect-head` or
+  `--anchors` checks against them. Without that, the chain proves that what
+  remains was not edited, not that nothing is missing. Choosing a witness the
+  operator does not control is the one step no software can take for them.
 * **The signing key.** Anyone holding the enforcer key can re-sign the receipts
   and the chain together. The chain raises editing history from an UPDATE to a
   key compromise; it does not survive one. `mandate chain rotate` bounds how

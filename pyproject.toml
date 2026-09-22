@@ -1,6 +1,6 @@
 [project]
 name = "mandate"
-version = "0.8.1"
+version = "0.9.0"
 description = "Enforcement gateway for AI-agent grants and execution"
 readme = "README.md"
 requires-python = ">=3.11"
