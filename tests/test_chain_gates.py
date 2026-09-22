@@ -1,4 +1,4 @@
-"""v0.7.0 receipt-chain gates G158-G199.
+"""v0.7.0 receipt-chain gates G158-G201.
 
 Signatures proved who wrote each receipt. They proved nothing about the set of
 receipts: an operator with database access could delete a row, roll a state
@@ -21,7 +21,7 @@ import pytest
 
 from mandate import chain as chainlib
 from mandate.crypto import KeyPair, utcnow, verify_object
-from mandate.engine import Engine
+from mandate.engine import Engine, MandateError
 from mandate.executor import ExecutionResult
 from mandate.ledger import Ledger, StorageError
 from mandate.routes import Route, RouteRegistry
@@ -1121,5 +1121,40 @@ def test_g199_a_hostile_anchor_file_cannot_silence_the_verifier(tmp_path):
         assert not report.ok
         # The point of the gate: the real tampering survives the noise.
         assert any("is stored as DENIED" in m for m in report.mismatches), report.mismatches
+    finally:
+        engine.ledger.close()
+
+
+def test_g200_a_rotation_that_rotates_nothing_is_refused(tmp_path):
+    """An operator who believes they rotated and did not is worse off than one
+    who gets an error: they now trust a key that never changed."""
+    engine, db, ids, _ = _world(tmp_path, calls=2)
+    try:
+        with pytest.raises(MandateError, match="changes nothing"):
+            engine.rotate_signer(engine.enforcer.did())
+        assert engine.verify_chain().ok, "the refusal must not have written anything"
+    finally:
+        engine.ledger.close()
+
+
+def test_g201_expect_signer_explains_itself_on_a_rotated_chain(tmp_path):
+    """A rotated chain has more than one signer. An operator who knows only the
+    current key and passes it gets BROKEN for a healthy chain — the cries-wolf
+    failure this project has already shipped once."""
+    engine, db, ids, _ = _world(tmp_path, calls=2)
+    first = engine.enforcer.did()
+    new = KeyPair.generate()
+    try:
+        engine.rotate_signer(new.did())
+        engine.enforcer = new
+
+        assert engine.verify_chain().ok
+        assert engine.verify_chain(expect_signer=first).ok, (
+            "--expect-signer names the key the chain starts with"
+        )
+        wrong = engine.verify_chain(expect_signer=new.did())
+        assert not wrong.ok
+        assert "takes over at seq" in (wrong.reason or ""), wrong.reason
+        assert "starts with" in (wrong.reason or ""), wrong.reason
     finally:
         engine.ledger.close()

@@ -422,6 +422,19 @@ def verify_chain(
             signer_did=expect_signer,
         )
         if problem:
+            # A chain that rotates has more than one signer, so an operator who
+            # knows only the current key and passes it to --expect-signer gets
+            # "BROKEN" for a perfectly healthy chain. Saying which key to pass
+            # is the difference between a finding and a false alarm — this
+            # project has already shipped a verifier that cried wolf once.
+            if signer_did is not None and "was signed by" in problem:
+                later = [e for e in entries[index - 1:]
+                         if is_rotation(e) and e.get("outcome") == signer_did]
+                if later:
+                    problem += (
+                        f"; that key takes over at seq {later[0]['seq']} — "
+                        f"--expect-signer names the key the chain starts with"
+                    )
             return ChainReport(
                 tenant=tenant, ok=False, length=index - 1, signer=expect_signer,
                 legacy_receipts=legacy_receipts, head=prev if index > 1 else None,
