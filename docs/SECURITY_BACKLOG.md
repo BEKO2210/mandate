@@ -107,9 +107,15 @@ handler; `urllib` forwarded `X-Vault-Token` to a redirect target, cross-origin
 and across an https-to-http downgrade (reproduced against a live server); a
 `SigningError` after dispatch was reported as a failed dispatch, inviting the
 retry that must not happen; and the enforcer signer was never proven to sign
-before the guard exposed its tools. Covered by G151-G156.
+before the guard exposed its tools.
 
-Covered by G120-G149.
+A second pass found the same defect one line further down, in the place the
+first fix had deliberately left alone: losing the final state race to the
+reconciler raised `MandateError("invalid state transition")` after dispatch,
+which the guard reported as a failed dispatch. It now raises `ExecutionUnknown`
+like every other post-dispatch failure.
+
+Covered by G120-G157.
 
 ## Residual / next
 

@@ -1,4 +1,4 @@
-"""v0.6.0 signing gates G120-G156.
+"""v0.6.0 signing gates G120-G157.
 
 Until now "the signer" and "the private key" were the same object. These gates
 cover the separation: a signer is something that can name a DID and produce a
@@ -746,3 +746,69 @@ def _engine_world(tmp_path):
     return {
         "engine": engine, "kms": kms, "upstream": upstream, "receipt_id": receipt["id"],
     }
+
+
+def test_g157_losing_the_final_state_race_is_unknown_not_a_failed_dispatch(tmp_path):
+    """A real race, not a mock: the reconciler moves the receipt out of
+    EXECUTING while the upstream call is still in flight, so the final CAS
+    loses. The call went out, so "could not dispatch it" would invite exactly
+    the retry that must not happen.
+
+    Found by review after the first fix landed — the same defect one line
+    further down, which the earlier change had deliberately left alone.
+    """
+    import threading
+    from datetime import timedelta
+
+    from mandate.crypto import utcnow
+    from mandate.engine import ExecutionUnknown
+    from mandate.executor import ExecutionResult
+    from mandate.routes import Route, RouteRegistry
+
+    class BlockingExecutor:
+        def __init__(self) -> None:
+            self.entered = threading.Event()
+            self.release = threading.Event()
+
+        def forward(self, route, method, path, body, idempotency_key):
+            self.entered.set()          # the request has gone out
+            self.release.wait(10)       # and we are waiting on the upstream
+            return ExecutionResult("EXECUTED", 200, 3, "sha256:x", None)
+
+    executor = BlockingExecutor()
+    engine = Engine(
+        ledger=Ledger(tmp_path / "m.sqlite"),
+        routes=RouteRegistry([Route(
+            audience="mandate://local", base_url="https://up.example",
+            allowed_methods=("POST",), allowed_paths=("/do",),
+        )]),
+        executor=executor,
+    )
+    person, pkp = engine.register_principal("Belkis")
+    agent, akp = engine.register_agent("Bot", person.did, "Mandate", "t")
+    grant = engine.issue_grant(
+        person, pkp, agent, organization="Aslani GmbH", purpose="p",
+        scopes=["x.do"], not_after=utcnow() + timedelta(days=1),
+    )
+    receipt_id = engine.propose(akp, grant["id"], "x.do", summary="s")["id"]
+
+    outcome: dict = {}
+
+    def run():
+        try:
+            outcome["result"] = engine.execute(receipt_id, idempotency_key="i")
+        except Exception as exc:  # noqa: BLE001 - the point of the gate
+            outcome["error"] = exc
+
+    worker = threading.Thread(target=run)
+    worker.start()
+    try:
+        assert executor.entered.wait(10), "the executor was never reached"
+        assert engine.reconcile_stale_executions(stale_after_s=-1) == [receipt_id]
+    finally:
+        executor.release.set()
+        worker.join(15)
+
+    error = outcome.get("error")
+    assert isinstance(error, ExecutionUnknown), f"got {error!r}"
+    assert error.receipt_id == receipt_id

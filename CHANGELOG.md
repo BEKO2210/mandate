@@ -68,6 +68,13 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   tells the caller the outcome is unknown, never that nothing was sent. This
   also corrects the pre-existing case where a post-dispatch `StorageError`
   became `DISPATCH_FAILED`. Gates G153-G155.
+- **A lost state race after dispatch was also reported as a failed dispatch.**
+  If the reconciler moved a receipt out of `EXECUTING` while the upstream call
+  was in flight, the final `cas_state` lost and raised
+  `MandateError("invalid state transition")` — which the guard turned into
+  `DISPATCH_FAILED` for a call that had already gone out. It now raises
+  `ExecutionUnknown` like every other post-dispatch failure. Gate G157
+  reproduces the race with a blocking executor rather than a mock.
 - The guard proves the **enforcer** signer can sign before exposing any tool.
   `Engine` only asks it for its DID, which a remote signer can answer from a
   published public key while lacking permission to sign. Gate G156.

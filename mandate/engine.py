@@ -712,7 +712,16 @@ class Engine:
                 signed = sign_object(self.enforcer, new_body)
                 dst = result.state
                 if not tx.cas_state(receipt_id, "EXECUTING", dst, signed):
-                    raise MandateError("invalid state transition")
+                    # Post-dispatch, losing this CAS means something else moved
+                    # the receipt out of EXECUTING while the upstream call was
+                    # in flight — normally the reconciler, which has already
+                    # written EXECUTION_UNKNOWN. The call went out either way,
+                    # so this is an unknown outcome, never a failed dispatch.
+                    raise ExecutionUnknown(
+                        "the call was dispatched but its outcome could not be recorded: "
+                        "the receipt is no longer EXECUTING",
+                        receipt_id,
+                    )
                 binding = tx.get_budget_binding(receipt_id)
                 if binding:
                     gid, curr, day, bamt = (
