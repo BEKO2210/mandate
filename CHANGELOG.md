@@ -3,6 +3,36 @@
 All notable changes to this project are documented here.
 This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.1] — 2026-09-22
+
+### Fixed
+
+A third review round, on the code that fixed the second round's finding. Two
+more ways to crash the verifier, both the same shape as the one before them
+and both reproduced against a live database: an empty report, and a second,
+ordinary tampering in the same database that went unreported because of it.
+
+- **A proof that is not an object crashed the verifier.** `proof.get(...)` on
+  a list raises `AttributeError`, which is neither `ValueError` nor
+  `TypeError` and so escaped the error boundary. It did the same to
+  `mandate verify` on a file — a traceback where `INVALID` belonged.
+  `verify_object` now answers `False` for anything malformed instead of
+  raising; every field it reads is hostile input by definition. Gate G186.
+- **A deeply nested body crashed the verifier.** `RecursionError` escaped the
+  boundary the same way. Gates G187, G188 — the first pins the behaviour for a
+  body no interpreter can parse, the second checks that a body one *can* parse
+  is still reconciled, because how deep is too deep is an interpreter detail
+  (3.11 gives up at 1000, 3.13 reads 20000) and a gate written around one
+  version's limit is a hole on another's.
+- **The boundary now catches every exception, not a list of them.** Naming the
+  expected ones encodes a guess about what hostile bytes can do, and that
+  guess has been wrong three times running: `UnicodeEncodeError`,
+  `AttributeError`, `RecursionError`. Failing there is conservative — the row
+  becomes a finding and the run continues — so breadth costs nothing and
+  narrowness costs the whole report.
+
+Gates G186-G188. Full suite: 209 passed on Python 3.11 and 3.13.
+
 ## [0.7.0] — 2026-09-22
 
 ### Added

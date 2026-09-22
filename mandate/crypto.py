@@ -143,12 +143,32 @@ def sign_object(kp: "Signer", obj: dict[str, Any]) -> dict[str, Any]:
 
 
 def verify_object(obj: dict[str, Any], expected_did: str | None = None) -> bool:
-    if "proof" not in obj:
+    """Does this object carry a proof that verifies? Never raise; answer.
+
+    The object may come from a file an auditor was handed or from a database
+    row an operator can write, so every field here is hostile input. A proof
+    that is a list rather than an object used to raise `AttributeError` out of
+    `.get` — which crashed `mandate verify` into a traceback instead of
+    INVALID, and crashed `mandate chain verify` into an empty report. A
+    verifier that dies says nothing, which is worse than the tampering it was
+    asked about. Malformed is simply not verified.
+    """
+    if not isinstance(obj, dict) or not isinstance(obj.get("proof"), dict):
         return False
     proof = obj["proof"]
     body = {k: v for k, v in obj.items() if k != "proof"}
     payload = canonical_json(body)
-    signer = expected_did if expected_did else proof.get("verificationMethod", "").split("#")[0]
-    if proof.get("payloadHash") and proof["payloadHash"] != sha256_hex(payload):
+    if expected_did is not None:
+        signer = expected_did
+    else:
+        method = proof.get("verificationMethod")
+        if not isinstance(method, str):
+            return False
+        signer = method.split("#")[0]
+    stored_hash = proof.get("payloadHash")
+    if stored_hash is not None and stored_hash != sha256_hex(payload):
         return False
-    return verify(signer, payload, proof.get("proofValue", ""))
+    value = proof.get("proofValue", "")
+    if not isinstance(value, str):
+        return False
+    return verify(signer, payload, value)

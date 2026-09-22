@@ -1,4 +1,4 @@
-"""v0.7.0 receipt-chain gates G158-G185.
+"""v0.7.0 receipt-chain gates G158-G188.
 
 Signatures proved who wrote each receipt. They proved nothing about the set of
 receipts: an operator with database access could delete a row, roll a state
@@ -20,7 +20,7 @@ from datetime import timedelta
 import pytest
 
 from mandate import chain as chainlib
-from mandate.crypto import KeyPair, utcnow
+from mandate.crypto import KeyPair, utcnow, verify_object
 from mandate.engine import Engine
 from mandate.executor import ExecutionResult
 from mandate.ledger import Ledger, StorageError
@@ -671,3 +671,90 @@ def test_g185_json_that_no_conforming_parser_reads_back_is_refused():
         chainlib.loads_strict('{"outer": {"text": "\\udc00"}}')
     # A paired surrogate is an ordinary character and must still be readable.
     assert chainlib.loads_strict('{"text": "\\ud83d\\ude00"}') == {"text": "\U0001f600"}
+
+
+def _poisoned_world(tmp_path, mutate):
+    """One receipt poisoned, and a second one tampered with ordinarily.
+
+    The second is the point. A verifier that dies on the first says nothing
+    about the rest of the database, so every one of these gates asserts that
+    the *ordinary* finding survives the poisoned row.
+    """
+    engine, db, ids, _ = _world(tmp_path, calls=3)
+    engine.ledger.close()
+    con = sqlite3.connect(db)
+    con.row_factory = sqlite3.Row
+    raw = con.execute("SELECT body FROM receipts WHERE id=?", (ids[0],)).fetchone()["body"]
+    con.close()
+    _sql(db, "UPDATE receipts SET body=? WHERE id=?", mutate(raw), ids[0])
+    _sql(db, "UPDATE receipts SET state='DENIED' WHERE id=?", ids[1])
+
+    engine = Engine(ledger=Ledger(db))
+    try:
+        return engine.verify_chain("default")
+    finally:
+        engine.ledger.close()
+
+
+def test_g186_a_proof_that_is_not_an_object_is_answered_not_raised(tmp_path):
+    """`proof.get` on a list raises AttributeError, which escaped the boundary.
+
+    It emptied the whole report, and it did the same to `mandate verify` on a
+    file — a traceback where INVALID belonged. Hostile input reaching a
+    verifier is the normal case, not the exceptional one.
+    """
+    for hostile in ([], "nope", 7, {"verificationMethod": 7},
+                    {"verificationMethod": "did:key:z6Mk", "proofValue": []}):
+        assert verify_object({"id": "x", "proof": hostile}) is False, hostile
+    assert verify_object(["not", "a", "dict"]) is False
+
+    def mutate(raw):
+        body = json.loads(raw)
+        body["proof"] = []
+        return json.dumps(body)
+
+    report = _poisoned_world(tmp_path, mutate)
+    assert not report.ok
+    assert any("DENIED" in m for m in report.mismatches), (
+        "the poisoned row must not cost the finding about the other receipt"
+    )
+
+
+def test_g187_a_deeply_nested_body_is_a_finding_not_a_crash(tmp_path):
+    """RecursionError is neither ValueError nor TypeError, so it escaped too.
+
+    An operator writes bytes, not Python objects: the nesting goes in as text
+    and the parser blows the stack on the way in.
+
+    The depth is far past any interpreter's limit on purpose. How deep is too
+    deep is an interpreter detail — 3.11 gives up at 1000 and 3.13 parses
+    20000 — so the gate pins the behaviour, never the threshold: a body the
+    parser cannot handle is reported, and the run survives it.
+    """
+    deep = '{"a":' * 25000 + "1" + "}" * 25000
+
+    def mutate(raw):
+        return raw[:-1] + ',"pad":' + deep + "}"
+
+    report = _poisoned_world(tmp_path, mutate)
+    assert not report.ok
+    assert any("cannot be read" in m for m in report.mismatches), report.mismatches
+    assert any("DENIED" in m for m in report.mismatches), (
+        "the poisoned row must not cost the finding about the other receipt"
+    )
+
+
+def test_g188_a_body_the_interpreter_can_parse_is_still_reconciled(tmp_path):
+    """The other half: depth that parses must not become a free edit.
+
+    3.13 reads 3000-deep nesting happily. That body is still a changed body,
+    so the canonical hash has to catch it — otherwise a gate written around
+    one interpreter's stack limit would leave a hole on another's.
+    """
+    def mutate(raw):
+        return raw[:-1] + ',"pad":' + ('{"a":' * 500 + "1" + "}" * 500) + "}"
+
+    report = _poisoned_world(tmp_path, mutate)
+    assert not report.ok
+    assert any(report.mismatches), report
+    assert any("DENIED" in m for m in report.mismatches), report.mismatches

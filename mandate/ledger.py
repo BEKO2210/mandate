@@ -760,7 +760,7 @@ class _Tx:
                     "body_hash": chain_body_hash(body),
                     "proof_ok": verify_object(body) if isinstance(body, dict) else False,
                 }
-            except (ValueError, TypeError) as exc:
+            except Exception as exc:  # noqa: BLE001 - see below
                 # Reported, not raised: a verifier has to survive bad rows and
                 # name them, not stop at the first one. The hashing and the
                 # proof check sit inside the boundary rather than after it —
@@ -768,6 +768,16 @@ class _Tx:
                 # took the entire report with it, findings about other
                 # receipts included. One poisoned row must cost one finding,
                 # never the run.
+                #
+                # The catch is deliberately every exception rather than a
+                # list. Naming the expected ones encodes a guess about what
+                # hostile bytes can do, and that guess has been wrong three
+                # times: UnicodeEncodeError from a lone surrogate,
+                # AttributeError from a proof that is a list, RecursionError
+                # from a deeply nested body. Each one emptied the whole
+                # report. Failing here is conservative — the row becomes a
+                # finding and the run continues — so breadth costs nothing
+                # and narrowness costs everything.
                 out[row["id"]] = {"state": row["state"], "body_hash": None,
                                   "error": f"stored JSON is unusable ({exc})"}
                 continue
