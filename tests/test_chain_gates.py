@@ -1,4 +1,4 @@
-"""v0.7.0 receipt-chain gates G158-G175.
+"""v0.7.0 receipt-chain gates G158-G176.
 
 Signatures proved who wrote each receipt. They proved nothing about the set of
 receipts: an operator with database access could delete a row, roll a state
@@ -373,3 +373,51 @@ def test_g175_an_enforcer_that_cannot_sign_refuses_instead_of_escaping(tmp_path)
     engine.enforcer = Dead(engine.enforcer)
     with pytest.raises(MandateError, match="could not be signed"):
         engine.propose(ctx["agent"], ctx["grant"], "x.do", summary="after the key died")
+
+
+def test_g176_balancing_the_receipt_count_does_not_hide_a_swap(tmp_path):
+    """The count of unchained receipts is a secondary net, so the obvious
+    attack on it is to keep it level: remove one receipt, add another.
+
+    Each variant is checked rather than argued, because "the other check will
+    catch it" is exactly the reasoning that left the first version of this
+    feature catching nothing.
+    """
+    fake = (
+        "INSERT INTO receipts(id, grant_id, agent_did, principal_did, audience, nonce,"
+        " action, state, body, tenant)"
+        " SELECT 'rcpt_fake', grant_id, agent_did, principal_did, audience, 'nonce-z',"
+        " action, state, body, tenant FROM receipts LIMIT 1"
+    )
+
+    # 1. Swap a mid-chain receipt for a fake: the chain still names the real one.
+    engine, db, ids, _ = _world(tmp_path / "a", calls=4)
+    _sql(db, "DELETE FROM receipts WHERE id=?", ids[1])
+    _sql(db, fake)
+    report = engine.verify_chain()
+    assert not report.ok
+    assert any("no longer in the database" in m for m in report.mismatches)
+
+    # 2. Remove its chain entries too: the links break where they were.
+    engine, db, ids, _ = _world(tmp_path / "b", calls=4)
+    _sql(db, "DELETE FROM chain WHERE receipt_id=?", ids[1])
+    _sql(db, "DELETE FROM receipts WHERE id=?", ids[1])
+    assert not engine.verify_chain().ok
+
+    # 3. Do it at the tail, where the links survive: the count catches it.
+    engine, db, ids, _ = _world(tmp_path / "c", calls=4)
+    _sql(db, "DELETE FROM chain WHERE receipt_id=?", ids[3])
+    _sql(db, "DELETE FROM receipts WHERE id=?", ids[3])
+    _sql(db, fake)
+    report = engine.verify_chain()
+    assert not report.ok
+    assert any("never recorded" in m for m in report.mismatches)
+
+    # 4. Keep the real id and forge its contents, dropping its entries.
+    engine, db, ids, _ = _world(tmp_path / "d", calls=4)
+    _sql(db, "DELETE FROM chain WHERE receipt_id=?", ids[3])
+    _sql(db, "UPDATE receipts SET body=json_set(body,'$.intent.summary','forged') WHERE id=?",
+         ids[3])
+    report = engine.verify_chain()
+    assert not report.ok
+    assert any("never recorded" in m for m in report.mismatches)

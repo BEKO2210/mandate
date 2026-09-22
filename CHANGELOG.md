@@ -21,6 +21,9 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   most needs to check a chain is the one who does not trust whoever runs it.
   An early version required the enforcer key and reported every healthy chain
   as broken when run by anyone else. Gate G174.
+- Gate G176 covers the composite attack the count check invites: removing one
+  receipt and inserting another to keep the total level, in each of the four
+  places it could be attempted.
 - `/v1/info` returns the chain head for the caller's tenant, so the people the
   receipts are about can keep one. A head held outside the deployment is the
   only thing that makes truncation detectable. Gate G169.

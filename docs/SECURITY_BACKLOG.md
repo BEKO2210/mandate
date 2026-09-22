@@ -140,7 +140,7 @@ chain head` hand out a head to keep elsewhere, and `--expect-head` checks
 against it; where that head goes is a deployment decision. A compromised
 enforcer key still allows receipts and chain to be re-signed together.
 
-Covered by G158-G175.
+Covered by G158-G176.
 
 ## Residual / next
 
