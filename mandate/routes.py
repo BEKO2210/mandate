@@ -71,6 +71,8 @@ class Route:
     follow_redirects: bool = False
     network_policy: str = "public"
     operations: tuple[Operation, ...] = ()
+    # Routes are tenant-scoped. Sharing one is an explicit act, not a default.
+    tenant: str = "default"
 
     def __post_init__(self) -> None:
         seen: set[str] = set()
@@ -92,11 +94,19 @@ class Route:
 
 
 class RouteRegistry:
+    """Audiences are resolved within a tenant. Two tenants may reuse a name
+    without ever reaching each other's upstream."""
+
     def __init__(self, routes: list[Route] | None = None) -> None:
-        self._routes = {r.audience: r for r in (routes or [])}
+        self._routes: dict[tuple[str, str], Route] = {}
+        for r in routes or []:
+            key = (r.tenant, r.audience)
+            if key in self._routes:
+                raise RouteConfigError(f"duplicate route {r.audience} for tenant {r.tenant}")
+            self._routes[key] = r
 
-    def get(self, audience: str) -> Route | None:
-        return self._routes.get(audience)
+    def get(self, audience: str, tenant: str = "default") -> Route | None:
+        return self._routes.get((tenant, audience))
 
-    def known(self, audience: str) -> bool:
-        return audience in self._routes
+    def known(self, audience: str, tenant: str = "default") -> bool:
+        return (tenant, audience) in self._routes

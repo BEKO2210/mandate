@@ -1,6 +1,6 @@
-# Threat model (v0.3.0)
+# Threat model (v0.4.0)
 
-TRUSTED: gateway, KeyProvider, route registry, SQLite tx layer, executor code, server-side Route.network_policy.
+TRUSTED: gateway, KeyProvider, route registry, SQLite tx layer, executor code, server-side Route.network_policy, the api_keys table.
 UNTRUSTED: agent, agent JSON, network, unsigned human input, upstream bodies, DNS answers.
 ASSETS: grants, approvals, enforcer key, budgets, receipts, audit.
 
@@ -58,3 +58,23 @@ is sent, and the executor sends exactly those bytes. This binds what the
 gateway committed to sending. It is not proof that the upstream received them:
 only the response hash speaks to that, and a timeout still yields
 EXECUTION_UNKNOWN.
+
+## Callers and tenants
+
+An Ed25519 signature says who authored a grant or an intent. It says nothing
+about who may reach the gateway, so the transport is authenticated separately
+with an API key. The key names a tenant, and the tenant scopes every lookup:
+grants, agents, receipts, nonces and routes. A record belonging to another
+tenant is reported as absent, never as forbidden, so holding a valid key
+elsewhere cannot confirm that an id exists.
+
+Only the SHA-256 of the key secret is stored. That is sufficient because the
+secret is 256 bits from a CSPRNG: there is no dictionary to attack, so a
+password-hashing cost per request would buy nothing. A stolen key is contained
+by disabling it, by its expiry, or by rotating it; it cannot be recovered from
+the ledger.
+
+The rate limiter is in-process. It bounds one gateway process, which is the
+same scope as the single-file SQLite ledger it protects. Running several
+gateway processes against one ledger would need a shared limiter, and is not
+supported today.

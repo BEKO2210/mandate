@@ -12,6 +12,7 @@ from fastapi.testclient import TestClient
 from mandate.crypto import sign_object, utcnow
 from mandate.engine import Engine, MandateError
 from mandate.executor import UpstreamExecutor, assert_safe_destination
+from mandate.auth import OpenAccess
 from mandate.gateway import create_app
 from mandate.keys import PersistedDevKeyProvider
 from mandate.models import Constraint, Intent
@@ -256,7 +257,7 @@ def test_g51_agent_cannot_override_network_policy(tmp_path):
         engine, dummy, person, pkp, agent, akp, grant = _world(tmp_path, dummy, policy="public")
         signed = _intent(akp, grant["id"], action="purchase.office", amount=10)
         signed["network_policy"] = "allow_private"
-        c = TestClient(create_app(engine), raise_server_exceptions=False)
+        c = TestClient(create_app(engine, auth=OpenAccess()), raise_server_exceptions=False)
         r = c.post("/v1/intents", json={"intent": signed, "execute": True})
         assert r.status_code in {400, 403}
         assert dummy.call_count() == 0
@@ -287,7 +288,7 @@ def test_g53_content_length_over_limit_skips_engine(tmp_path):
             return orig(intent)
 
         engine.submit_intent = wrapped  # type: ignore[method-assign]
-        c = TestClient(create_app(engine), raise_server_exceptions=False)
+        c = TestClient(create_app(engine, auth=OpenAccess()), raise_server_exceptions=False)
         r = c.post(
             "/v1/intents",
             content=b"x" * (MAX_BODY + 50),
@@ -301,7 +302,7 @@ def test_g53_content_length_over_limit_skips_engine(tmp_path):
 
 
 def test_g54_chunked_without_content_length_over_limit():
-    app = create_app(Engine())
+    app = create_app(Engine(), auth=OpenAccess())
 
     async def run():
         chunks = [b"a" * 1000 for _ in range((MAX_BODY // 1000) + 2)]
@@ -340,7 +341,7 @@ def test_g54_chunked_without_content_length_over_limit():
 
 
 def test_g55_payload_exactly_max_body_not_413():
-    app = create_app(Engine())
+    app = create_app(Engine(), auth=OpenAccess())
     c = TestClient(app, raise_server_exceptions=False)
     body = b"{" + b"a" * (MAX_BODY - 2) + b"}"
     assert len(body) == MAX_BODY
@@ -349,14 +350,14 @@ def test_g55_payload_exactly_max_body_not_413():
 
 
 def test_g56_payload_max_plus_one_is_413():
-    app = create_app(Engine())
+    app = create_app(Engine(), auth=OpenAccess())
     c = TestClient(app, raise_server_exceptions=False)
     r = c.post("/v1/intents", content=b"x" * (MAX_BODY + 1), headers={"Content-Type": "application/json"})
     assert r.status_code == 413
 
 
 def test_g57_malformed_oversized_json_size_wins():
-    app = create_app(Engine())
+    app = create_app(Engine(), auth=OpenAccess())
     c = TestClient(app, raise_server_exceptions=False)
     r = c.post("/v1/intents", content=b"{not-json" + b"x" * MAX_BODY, headers={"Content-Type": "application/json"})
     assert r.status_code == 413

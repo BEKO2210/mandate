@@ -10,6 +10,7 @@ from uuid import uuid4
 
 from . import disclosure as disc
 from .crypto import KeyPair, iso, sign_object, utcnow, verify_object
+from .auth import DEFAULT_TENANT
 from .executor import ExecutionResult
 from .keys import EphemeralKeyProvider, KeyProvider, PersistedDevKeyProvider
 from .ledger import Ledger, StorageError
@@ -42,6 +43,15 @@ class MandateError(Exception):
 
 def _day() -> str:
     return utcnow().strftime("%Y-%m-%d")
+
+
+def _scoped_idem(tenant: str, idem: str) -> str:
+    """Tenant-scoped storage form of a caller-chosen idempotency key.
+
+    Length-prefixed so no tenant name or key content can be crafted to collide
+    with another tenant's pair.
+    """
+    return f"{len(tenant)}:{tenant}:{idem}"
 
 
 def _grant_from_doc(doc: dict[str, Any]) -> Grant:
@@ -124,11 +134,14 @@ class Engine:
     def _day(self) -> str:
         return self._now().strftime("%Y-%m-%d")
 
-    def register_principal(self, name: str, kind: str = "person", jurisdiction: str = "DE"):
+    def register_principal(
+        self, name: str, kind: str = "person", jurisdiction: str = "DE",
+        tenant: str = DEFAULT_TENANT,
+    ):
         kp = KeyPair.generate()
         p = Principal(did=kp.did(), kind=kind, name=name, jurisdiction=jurisdiction)
         with self.ledger.tx() as tx:
-            tx.put_principal(p.did, p.to_dict())
+            tx.put_principal(p.did, p.to_dict(), tenant=tenant)
         if self._store is not None:
             try:
                 self._store.put_principal(p)
@@ -136,7 +149,9 @@ class Engine:
                 pass
         return p, kp
 
-    def register_agent(self, name, operator_did, developer, model, skills=None):
+    def register_agent(
+        self, name, operator_did, developer, model, skills=None, tenant: str = DEFAULT_TENANT
+    ):
         kp = KeyPair.generate()
         card = AgentCard(
             did=kp.did(),
@@ -148,7 +163,7 @@ class Engine:
         )
         signed = sign_object(kp, card.to_dict())
         with self.ledger.tx() as tx:
-            tx.put_agent(card.did, signed)
+            tx.put_agent(card.did, signed, tenant=tenant)
         return card, kp
 
     def issue_grant(
@@ -162,6 +177,7 @@ class Engine:
         not_after,
         constraints=None,
         not_before=None,
+        tenant: str = DEFAULT_TENANT,
     ):
         grant = Grant.create(
             principal.did,
@@ -177,12 +193,15 @@ class Engine:
         if not verify_object(signed, expected_did=principal.did):
             raise MandateError("grant signature failed")
         with self.ledger.tx() as tx:
-            tx.put_grant(grant.id, principal.did, agent.did, "active", signed)
+            # Authority must not cross a tenant boundary at issue time either.
+            if tx.get_agent(agent.did, tenant=tenant) is None:
+                raise MandateError("unknown agent")
+            tx.put_grant(grant.id, principal.did, agent.did, "active", signed, tenant=tenant)
         return signed
 
-    def revoke_grant(self, grant_id, principal_kp):
+    def revoke_grant(self, grant_id, principal_kp, tenant: str = DEFAULT_TENANT):
         with self.ledger.tx() as tx:
-            g = tx.get_grant(grant_id)
+            g = tx.get_grant(grant_id, tenant=tenant)
             if not g:
                 raise MandateError("unknown grant")
             if g["principal_did"] != principal_kp.did():
@@ -190,18 +209,23 @@ class Engine:
             g = {k: v for k, v in g.items() if k != "proof"}
             g["status"] = "revoked"
             signed = sign_object(principal_kp, g)
-            tx.put_grant(grant_id, signed["principal_did"], signed["agent_did"], "revoked", signed)
+            tx.put_grant(
+                grant_id, signed["principal_did"], signed["agent_did"], "revoked", signed,
+                tenant=tenant,
+            )
             tx.audit("grant.revoked", {"grant_id": grant_id})
         return signed
 
-    def propose(self, agent_kp, grant_id, action, **kwargs):
+    def propose(self, agent_kp, grant_id, action, tenant: str = DEFAULT_TENANT, **kwargs):
         kwargs.setdefault("audience", "mandate://local")
         kwargs.setdefault("nonce", uuid4().hex)
         intent = Intent.create(agent_did=agent_kp.did(), grant_id=grant_id, action=action, **kwargs)
         signed = sign_object(agent_kp, intent.to_dict())
-        return self.submit_intent(signed)
+        return self.submit_intent(signed, tenant=tenant)
 
-    def submit_intent(self, signed_intent: dict[str, Any]) -> dict[str, Any]:
+    def submit_intent(
+        self, signed_intent: dict[str, Any], tenant: str = DEFAULT_TENANT
+    ) -> dict[str, Any]:
         try:
             reject_forbidden(signed_intent)
             body = {k: v for k, v in signed_intent.items() if k != "proof"}
@@ -225,7 +249,9 @@ class Engine:
         try:
             with self.ledger.tx() as tx:
                 tx.audit("intent.received", {"intent_id": intent.id, "grant_id": intent.grant_id}, intent.id)
-                grant_doc = tx.get_grant(intent.grant_id)
+                # A grant of another tenant must be indistinguishable from
+                # one that does not exist.
+                grant_doc = tx.get_grant(intent.grant_id, tenant=tenant)
                 if not grant_doc:
                     raise MandateError("unknown grant")
                 if not verify_object(grant_doc, expected_did=grant_doc["principal_did"]):
@@ -233,11 +259,11 @@ class Engine:
                     raise MandateError("grant signature invalid")
                 grant = _grant_from_doc(grant_doc)
 
-                if not tx.consume_nonce(intent.audience, intent.nonce, receipt_id):
+                if not tx.consume_nonce(intent.audience, intent.nonce, receipt_id, tenant=tenant):
                     tx.audit("replay.rejected", {"nonce": intent.nonce, "audience": intent.audience}, intent.id)
                     raise MandateError("replay: nonce already used for this audience")
 
-                agent_doc = tx.get_agent(intent.agent_did)
+                agent_doc = tx.get_agent(intent.agent_did, tenant=tenant)
                 if not agent_doc:
                     raise MandateError("unknown agent")
 
@@ -314,6 +340,7 @@ class Engine:
                         "execution_id": None,
                         "body": signed_receipt,
                         "budget_day": budget_day,
+                        "tenant": tenant,
                     }
                 )
                 return signed_receipt
@@ -326,9 +353,9 @@ class Engine:
         except Exception as exc:
             raise MandateError("policy or internal error") from exc
 
-    def get_receipt(self, receipt_id: str) -> dict | None:
+    def get_receipt(self, receipt_id: str, tenant: str = DEFAULT_TENANT) -> dict | None:
         with self.ledger.tx() as tx:
-            row = tx.get_receipt(receipt_id)
+            row = tx.get_receipt(receipt_id, tenant=tenant)
         if not row:
             return None
         body = json.loads(row["body"])
@@ -336,12 +363,15 @@ class Engine:
             raise MandateError("receipt was not signed by this enforcer")
         return body
 
-    def approve(self, receipt_id: str, principal_kp: KeyPair, approval: dict | None = None) -> dict[str, Any]:
+    def approve(
+        self, receipt_id: str, principal_kp: KeyPair, approval: dict | None = None,
+        tenant: str = DEFAULT_TENANT,
+    ) -> dict[str, Any]:
         """Revalidate then HUMAN_REQUIRED -> AUTHORIZED. Never jumps to EXECUTED."""
         if approval is None:
             row_preview = None
             with self.ledger.tx() as tx:
-                row_preview = tx.get_receipt(receipt_id)
+                row_preview = tx.get_receipt(receipt_id, tenant=tenant)
             if not row_preview:
                 raise MandateError("unknown receipt")
             body = json.loads(row_preview["body"])
@@ -366,9 +396,12 @@ class Engine:
                     "not_after": iso(utcnow() + timedelta(minutes=10)),
                 },
             )
-        return self.submit_approval(approval, principal_kp.did())
+        return self.submit_approval(approval, principal_kp.did(), tenant=tenant)
 
-    def submit_approval(self, signed_approval: dict[str, Any], expected_principal: str | None = None) -> dict[str, Any]:
+    def submit_approval(
+        self, signed_approval: dict[str, Any], expected_principal: str | None = None,
+        tenant: str = DEFAULT_TENANT,
+    ) -> dict[str, Any]:
         try:
             reject_forbidden(signed_approval)
         except ValidationError as exc:
@@ -396,7 +429,7 @@ class Engine:
         try:
             with self.ledger.tx() as tx:
                 tx.audit("approval.received", {"receipt_id": a.get("receipt_id")}, a.get("approval_id"))
-                row = tx.get_receipt(a["receipt_id"])
+                row = tx.get_receipt(a["receipt_id"], tenant=tenant)
                 if not row:
                     raise MandateError("unknown receipt")
                 if row["state"] != "HUMAN_REQUIRED":
@@ -425,7 +458,7 @@ class Engine:
                     raise MandateError("approval replay")
                 tx.consume_approval(approval_id)
 
-                grant_doc = tx.get_grant(body["grant_id"])
+                grant_doc = tx.get_grant(body["grant_id"], tenant=tenant)
                 if not grant_doc or not verify_object(grant_doc, expected_did=grant_doc["principal_did"]):
                     raise MandateError("grant signature invalid")
                 grant = _grant_from_doc(grant_doc)
@@ -482,22 +515,24 @@ class Engine:
         except StorageError as exc:
             raise MandateError("storage error") from exc
 
-    def execute(self, receipt_id: str, idempotency_key: str | None = None) -> dict[str, Any]:
+    def execute(
+        self, receipt_id: str, idempotency_key: str | None = None,
+        tenant: str = DEFAULT_TENANT,
+    ) -> dict[str, Any]:
         if self.executor is None:
             raise MandateError("no executor configured")
         executor = self.executor
 
         try:
             with self.ledger.tx() as tx:
+                row = tx.get_receipt(receipt_id, tenant=tenant)
+                if not row:
+                    raise MandateError("unknown receipt")
                 existing = tx.get_execution_by_receipt(receipt_id)
                 if existing:
-                    row = tx.get_receipt(receipt_id)
                     if row["state"] == "EXECUTING" and self._is_stale(existing.get("started_at")):
                         return self._mark_unknown(tx, receipt_id, "reconciled: claim outlived its process")
                     return json.loads(row["body"])
-                row = tx.get_receipt(receipt_id)
-                if not row:
-                    raise MandateError("unknown receipt")
                 if row["state"] != "AUTHORIZED":
                     raise MandateError(f"invalid state transition {row['state']} -> EXECUTING")
                 body = json.loads(row["body"])
@@ -517,7 +552,7 @@ class Engine:
                     raise MandateError(f"inexact amount: {exc}") from exc
                 if row["amount_minor"] is not None and int(row["amount_minor"]) != amount_minor:
                     raise MandateError("receipt execution fields mismatch")
-                grant_doc = tx.get_grant(body["grant_id"])
+                grant_doc = tx.get_grant(body["grant_id"], tenant=tenant)
                 if not grant_doc or not verify_object(grant_doc, expected_did=body["principal_did"]):
                     raise MandateError("grant signature invalid")
                 grant = _grant_from_doc(grant_doc)
@@ -552,14 +587,20 @@ class Engine:
                     tx.audit("execution.denied", {"receipt_id": receipt_id, "reasons": decision.reasons}, receipt_id)
                     return signed
                 audience = row["audience"]
-                route = self.routes.get(audience)
+                route = self.routes.get(audience, tenant=row["tenant"])
                 if route is None:
                     raise MandateError("unknown route")
                 execution_id = new_id("exec")
                 idem = idempotency_key or execution_id
-                prior = tx.get_execution_by_idem(idem)
+                # Idempotency keys are caller-chosen, so they are stored under
+                # a tenant-scoped form. Otherwise one tenant's key could return
+                # another tenant's receipt.
+                stored_idem = _scoped_idem(tenant, idem)
+                prior = tx.get_execution_by_idem(stored_idem)
                 if prior:
-                    r2 = tx.get_receipt(prior["receipt_id"])
+                    r2 = tx.get_receipt(prior["receipt_id"], tenant=tenant)
+                    if r2 is None:
+                        raise MandateError("idempotency key already used")
                     return json.loads(r2["body"])
                 # The body is built and hashed before the claim, so the signed
                 # receipt commits to the exact bytes that will be sent.
@@ -607,7 +648,8 @@ class Engine:
                     raise MandateError("authorization already consumed")
                 tx.set_execution(receipt_id, execution_id)
                 tx.put_execution(
-                    execution_id, receipt_id, idem, "EXECUTING", {"started": started}, started_at=started
+                    execution_id, receipt_id, stored_idem, "EXECUTING", {"started": started},
+                    started_at=started,
                 )
                 tx.audit("execution.started", {"execution_id": execution_id, "receipt_id": receipt_id}, receipt_id)
         except StorageError as exc:
@@ -663,7 +705,9 @@ class Engine:
                     tx.audit("execution.failed", {"execution_id": execution_id, "budget_day": day}, receipt_id)
                 else:
                     tx.audit("execution.unknown", {"execution_id": execution_id, "budget_day": day}, receipt_id)
-                tx.put_execution(execution_id, receipt_id, idem, result.state, new_body["execution"])
+                tx.put_execution(
+                    execution_id, receipt_id, stored_idem, result.state, new_body["execution"]
+                )
                 return signed
         except StorageError as exc:
             raise MandateError("storage error") from exc

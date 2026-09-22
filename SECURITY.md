@@ -21,6 +21,8 @@ In scope:
 
 - Bypassing authorization: reaching a registered upstream without a currently
   valid, principal-signed grant
+- Bypassing authentication, or reading, writing or affecting the records of a
+  tenant other than the one the presented key belongs to
 - Budget, nonce, approval or execution-claim defects: double spend, replay,
   double dispatch, a receipt that misstates what happened
 - Forging, tampering with or misattributing a signed object
@@ -31,7 +33,7 @@ Known and documented, so not a finding on their own — see `docs/THREAT_MODEL.m
 and `docs/SECURITY_BACKLOG.md`:
 
 - HTTPS DNS TOCTOU: the TLS peer IP is not pinned
-- No transport authentication, no multi-tenancy, no rate limiting
+- The rate limiter is in-process, so it bounds one gateway process
 - Receipts are individually signed but not chained; an operator with database
   access can delete or roll back history
 - `EXECUTION_UNKNOWN` holds its reservation until a human reconciles it

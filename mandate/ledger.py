@@ -58,18 +58,21 @@ class Ledger:
             """
             CREATE TABLE IF NOT EXISTS principals (
               did TEXT PRIMARY KEY,
-              body TEXT NOT NULL
+              body TEXT NOT NULL,
+              tenant TEXT NOT NULL DEFAULT 'default'
             );
             CREATE TABLE IF NOT EXISTS agents (
               did TEXT PRIMARY KEY,
-              body TEXT NOT NULL
+              body TEXT NOT NULL,
+              tenant TEXT NOT NULL DEFAULT 'default'
             );
             CREATE TABLE IF NOT EXISTS grants (
               id TEXT PRIMARY KEY,
               principal_did TEXT NOT NULL,
               agent_did TEXT NOT NULL,
               status TEXT NOT NULL,
-              body TEXT NOT NULL
+              body TEXT NOT NULL,
+              tenant TEXT NOT NULL DEFAULT 'default'
             );
             CREATE TABLE IF NOT EXISTS receipts (
               id TEXT PRIMARY KEY,
@@ -83,13 +86,15 @@ class Ledger:
               currency TEXT,
               state TEXT NOT NULL,
               execution_id TEXT,
-              body TEXT NOT NULL
+              body TEXT NOT NULL,
+              tenant TEXT NOT NULL DEFAULT 'default'
             );
             CREATE TABLE IF NOT EXISTS nonces (
+              tenant TEXT NOT NULL DEFAULT 'default',
               audience TEXT NOT NULL,
               nonce TEXT NOT NULL,
               receipt_id TEXT,
-              PRIMARY KEY (audience, nonce)
+              PRIMARY KEY (tenant, audience, nonce)
             );
             CREATE TABLE IF NOT EXISTS approvals (
               id TEXT PRIMARY KEY,
@@ -118,6 +123,16 @@ class Ledger:
             CREATE TABLE IF NOT EXISTS meta (
               key TEXT PRIMARY KEY,
               value TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS api_keys (
+              id TEXT PRIMARY KEY,
+              tenant TEXT NOT NULL,
+              name TEXT NOT NULL,
+              secret_hash TEXT NOT NULL,
+              scopes TEXT NOT NULL,
+              created_at TEXT NOT NULL,
+              expires_at TEXT,
+              disabled INTEGER NOT NULL DEFAULT 0
             );
             CREATE TABLE IF NOT EXISTS audit (
               id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -159,6 +174,42 @@ class Ledger:
             self._migrate_amounts_to_minor()
             self._conn.execute(
                 "INSERT OR REPLACE INTO meta(key, value) VALUES ('schema_version', '2')"
+            )
+        if self._schema_version() < 3:
+            self._migrate_add_tenancy()
+            self._conn.execute(
+                "INSERT OR REPLACE INTO meta(key, value) VALUES ('schema_version', '3')"
+            )
+
+    def _migrate_add_tenancy(self) -> None:
+        """Every record belongs to a tenant. Pre-0.4 rows join the default one."""
+        for table in ("principals", "agents", "grants", "receipts"):
+            cols = {row[1] for row in self._conn.execute(f"PRAGMA table_info({table})")}
+            if "tenant" not in cols:
+                self._conn.execute(
+                    f"ALTER TABLE {table} ADD COLUMN tenant TEXT NOT NULL DEFAULT 'default'"
+                )
+            self._conn.execute(
+                f"UPDATE {table} SET tenant='default' WHERE tenant IS NULL OR tenant=''"
+            )
+        nonce_cols = {row[1] for row in self._conn.execute("PRAGMA table_info(nonces)")}
+        if "tenant" not in nonce_cols:
+            # The primary key itself has to gain the tenant, otherwise one
+            # tenant could burn another tenant's nonces, so the table is rebuilt.
+            self._conn.executescript(
+                """
+                CREATE TABLE nonces_v3 (
+                  tenant TEXT NOT NULL,
+                  audience TEXT NOT NULL,
+                  nonce TEXT NOT NULL,
+                  receipt_id TEXT,
+                  PRIMARY KEY (tenant, audience, nonce)
+                );
+                INSERT OR IGNORE INTO nonces_v3(tenant, audience, nonce, receipt_id)
+                  SELECT 'default', audience, nonce, receipt_id FROM nonces;
+                DROP TABLE nonces;
+                ALTER TABLE nonces_v3 RENAME TO nonces;
+                """
             )
 
     def _schema_version(self) -> int:
@@ -232,41 +283,95 @@ class _Tx:
             self.l._lock.release()
         return False
 
-    def put_principal(self, did: str, body: dict) -> None:
+    def put_principal(self, did: str, body: dict, tenant: str = "default") -> None:
         self.l._conn.execute(
-            "INSERT OR REPLACE INTO principals(did, body) VALUES (?,?)",
-            (did, json.dumps(body)),
+            "INSERT OR REPLACE INTO principals(did, body, tenant) VALUES (?,?,?)",
+            (did, json.dumps(body), tenant),
         )
 
-    def put_agent(self, did: str, body: dict) -> None:
+    def put_agent(self, did: str, body: dict, tenant: str = "default") -> None:
         self.l._conn.execute(
-            "INSERT OR REPLACE INTO agents(did, body) VALUES (?,?)",
-            (did, json.dumps(body)),
+            "INSERT OR REPLACE INTO agents(did, body, tenant) VALUES (?,?,?)",
+            (did, json.dumps(body), tenant),
         )
 
-    def get_agent(self, did: str) -> dict | None:
-        row = self.l._conn.execute("SELECT body FROM agents WHERE did=?", (did,)).fetchone()
+    def get_agent(self, did: str, tenant: str | None = None) -> dict | None:
+        """A DID from another tenant reads as absent, not as forbidden."""
+        if tenant is None:
+            row = self.l._conn.execute("SELECT body FROM agents WHERE did=?", (did,)).fetchone()
+        else:
+            row = self.l._conn.execute(
+                "SELECT body FROM agents WHERE did=? AND tenant=?", (did, tenant)
+            ).fetchone()
         return json.loads(row["body"]) if row else None
 
-    def put_grant(self, grant_id: str, principal_did: str, agent_did: str, status: str, body: dict) -> None:
+    def put_grant(
+        self, grant_id: str, principal_did: str, agent_did: str, status: str, body: dict,
+        tenant: str = "default",
+    ) -> None:
         self.l._conn.execute(
-            "INSERT OR REPLACE INTO grants(id, principal_did, agent_did, status, body) VALUES (?,?,?,?,?)",
-            (grant_id, principal_did, agent_did, status, json.dumps(body)),
+            """INSERT OR REPLACE INTO grants(id, principal_did, agent_did, status, body, tenant)
+               VALUES (?,?,?,?,?,?)""",
+            (grant_id, principal_did, agent_did, status, json.dumps(body), tenant),
         )
 
-    def get_grant(self, grant_id: str) -> dict | None:
-        row = self.l._conn.execute("SELECT body FROM grants WHERE id=?", (grant_id,)).fetchone()
+    def get_grant(self, grant_id: str, tenant: str | None = None) -> dict | None:
+        if tenant is None:
+            row = self.l._conn.execute("SELECT body FROM grants WHERE id=?", (grant_id,)).fetchone()
+        else:
+            row = self.l._conn.execute(
+                "SELECT body FROM grants WHERE id=? AND tenant=?", (grant_id, tenant)
+            ).fetchone()
         return json.loads(row["body"]) if row else None
 
-    def consume_nonce(self, audience: str, nonce: str, receipt_id: str) -> bool:
+    def grant_tenant(self, grant_id: str) -> str | None:
+        row = self.l._conn.execute("SELECT tenant FROM grants WHERE id=?", (grant_id,)).fetchone()
+        return row["tenant"] if row else None
+
+    def consume_nonce(
+        self, audience: str, nonce: str, receipt_id: str, tenant: str = "default"
+    ) -> bool:
         try:
             self.l._conn.execute(
-                "INSERT INTO nonces(audience, nonce, receipt_id) VALUES (?,?,?)",
-                (audience, nonce, receipt_id),
+                "INSERT INTO nonces(tenant, audience, nonce, receipt_id) VALUES (?,?,?,?)",
+                (tenant, audience, nonce, receipt_id),
             )
             return True
         except sqlite3.IntegrityError:
             return False
+
+    def put_api_key(
+        self, key_id: str, tenant: str, name: str, secret_hash: str, scopes: str,
+        created_at: str, expires_at: str | None,
+    ) -> None:
+        self.l._conn.execute(
+            """INSERT INTO api_keys(id, tenant, name, secret_hash, scopes, created_at, expires_at, disabled)
+               VALUES (?,?,?,?,?,?,?,0)""",
+            (key_id, tenant, name, secret_hash, scopes, created_at, expires_at),
+        )
+
+    def get_api_key(self, key_id: str) -> dict | None:
+        row = self.l._conn.execute("SELECT * FROM api_keys WHERE id=?", (key_id,)).fetchone()
+        return dict(row) if row else None
+
+    def disable_api_key(self, key_id: str) -> bool:
+        cur = self.l._conn.execute(
+            "UPDATE api_keys SET disabled=1 WHERE id=? AND disabled=0", (key_id,)
+        )
+        return cur.rowcount == 1
+
+    def list_api_keys(self, tenant: str | None = None) -> list[dict]:
+        if tenant is None:
+            rows = self.l._conn.execute(
+                "SELECT id, tenant, name, scopes, created_at, expires_at, disabled FROM api_keys"
+            ).fetchall()
+        else:
+            rows = self.l._conn.execute(
+                """SELECT id, tenant, name, scopes, created_at, expires_at, disabled
+                   FROM api_keys WHERE tenant=?""",
+                (tenant,),
+            ).fetchall()
+        return [dict(r) for r in rows]
 
     def spent(self, grant_id: str, currency: str, day: str) -> int:
         """Reserved plus committed minor units for this grant/currency/day."""
@@ -318,14 +423,16 @@ class _Tx:
     def insert_receipt(self, rec: dict) -> None:
         self.l._conn.execute(
             """INSERT INTO receipts(id, grant_id, agent_did, principal_did, audience, nonce,
-               action, amount, amount_minor, currency, state, execution_id, body, budget_day)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+               action, amount, amount_minor, currency, state, execution_id, body, budget_day,
+               tenant)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (
                 rec["id"], rec["grant_id"], rec["agent_did"], rec["principal_did"],
                 rec["audience"], rec["nonce"], rec["action"], rec.get("amount"),
                 rec.get("amount_minor"),
                 rec.get("currency"), rec["state"], rec.get("execution_id"),
                 json.dumps(rec["body"]), rec.get("budget_day"),
+                rec.get("tenant", "default"),
             ),
         )
 
@@ -373,8 +480,16 @@ class _Tx:
             return {"reserved": 0, "committed": 0}
         return {"reserved": int(row["reserved"]), "committed": int(row["committed"])}
 
-    def get_receipt(self, receipt_id: str) -> dict | None:
-        row = self.l._conn.execute("SELECT * FROM receipts WHERE id=?", (receipt_id,)).fetchone()
+    def get_receipt(self, receipt_id: str, tenant: str | None = None) -> dict | None:
+        """A receipt of another tenant reads as absent, never as forbidden."""
+        if tenant is None:
+            row = self.l._conn.execute(
+                "SELECT * FROM receipts WHERE id=?", (receipt_id,)
+            ).fetchone()
+        else:
+            row = self.l._conn.execute(
+                "SELECT * FROM receipts WHERE id=? AND tenant=?", (receipt_id, tenant)
+            ).fetchone()
         if not row:
             return None
         return dict(row)

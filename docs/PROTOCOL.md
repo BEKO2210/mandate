@@ -38,3 +38,11 @@ The receipt carries, signed before dispatch:
     execution.request = {method, path, destination, hash, size}
 
 where `hash` is `sha256:<hex>` over the exact bytes sent.
+
+## Tenancy (0.4.0)
+
+Every principal, agent, grant, receipt, nonce and route belongs to a tenant.
+The API key presented on the request decides which tenant a call operates in;
+it is never carried in a signed object, so a compromised agent key cannot move
+authority between tenants. Nonce uniqueness is per (tenant, audience, nonce).
+Records of another tenant are reported as absent rather than forbidden.

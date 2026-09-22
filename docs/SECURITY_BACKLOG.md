@@ -58,11 +58,32 @@ refused, and an operation cannot widen its route's method or path allowlist.
 
 Covered by G70-G79.
 
+## SH-07 — The gateway must know who is calling — DONE in v0.4.0
+
+Signed objects proved who authored a grant. They never said who may reach the
+gateway. Anyone who could open a socket could submit intents and read any
+receipt whose id they held.
+
+Every endpoint but `/health` now requires an API key. Only the SHA-256 of a
+256-bit secret is stored, comparison is constant time, and an unknown key id
+follows the same path as a wrong secret. Keys carry scopes, an optional expiry
+and a disable switch, and a per-key token bucket answers 429.
+
+Records belong to a tenant and the key decides which one. Another tenant's
+grant or receipt reads as absent rather than forbidden, so a valid key cannot
+be used as an existence oracle. Nonces carry the tenant in their primary key,
+so one tenant cannot burn another's. Routes are resolved within a tenant.
+
+`create_app()` refuses to build an unauthenticated gateway; that has to be
+chosen out loud with `OpenAccess()`.
+
+Covered by G81-G98.
+
 ## Residual / next
 
 - HTTPS DNS TOCTOU (check then connect by name)
 - No connection-level IP pin for TLS
-- No transport authentication, multi-tenancy or rate limiting on the gateway
+- The rate limiter is in-process and bounds one gateway process
 - Receipts are individually signed but not chained; an operator with database
   access can delete or roll back history
 - The request hash binds what the gateway sent, not what the upstream received
