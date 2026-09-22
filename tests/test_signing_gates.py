@@ -1,4 +1,4 @@
-"""v0.6.0 signing gates G120-G150.
+"""v0.6.0 signing gates G120-G156.
 
 Until now "the signer" and "the private key" were the same object. These gates
 cover the separation: a signer is something that can name a DID and produce a
@@ -538,3 +538,211 @@ def test_g147_a_tool_call_runs_end_to_end_with_a_key_the_process_cannot_read(tmp
     # Every signature on the way there came from the key manager.
     assert len(kms.signed) >= 1
     assert state["agent_did"] == kms.did()
+
+
+# --- Round two: what independent review found -------------------------------
+
+
+def test_g151_a_malformed_configured_did_is_a_signing_error_not_a_valueerror():
+    """`crypto.verify` parses the DID outside its own try block, so a bad one
+    surfaced as ValueError/AttributeError past every SigningError handler."""
+    kp = KeyPair.generate()
+    for bad in ("not-a-did", "did:web:example.com", 12345, b"did:key:z"):
+        with pytest.raises(SigningError):
+            CommandSigner(["/x"], did=bad, runner=lambda *a, **k: _Completed(kp.sign(b"p")))
+    good = CommandSigner(["/x"], did=kp.did(), runner=lambda *a, **k: _Completed(kp.sign(b"p")))
+    assert good.sign(b"p") == kp.sign(b"p")
+
+
+def test_g152_the_vault_token_is_never_resent_to_a_redirect_target():
+    """Reproduced against a live server before the fix: urllib copies ordinary
+    headers onto a redirected request, across origins and across an
+    https-to-http downgrade, so a 302 handed `X-Vault-Token` to the new host."""
+    import http.server
+    import threading
+
+    from mandate.signing import _urllib_transport
+
+    seen: dict[str, dict] = {}
+
+    class Attacker(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            seen["headers"] = dict(self.headers)
+            self.send_response(200)
+            self.send_header("Content-Length", "2")
+            self.end_headers()
+            self.wfile.write(b"{}")
+
+        def log_message(self, *a):
+            pass
+
+    class Redirector(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(302)
+            self.send_header("Location", f"http://127.0.0.1:{attacker_port}/stolen")
+            self.end_headers()
+
+        def log_message(self, *a):
+            pass
+
+    attacker = http.server.HTTPServer(("127.0.0.1", 0), Attacker)
+    attacker_port = attacker.server_address[1]
+    redirector = http.server.HTTPServer(("127.0.0.1", 0), Redirector)
+    threading.Thread(target=attacker.serve_forever, daemon=True).start()
+    threading.Thread(target=redirector.serve_forever, daemon=True).start()
+    try:
+        status, _ = _urllib_transport(
+            "GET",
+            f"http://127.0.0.1:{redirector.server_address[1]}/v1/transit/keys/k",
+            {"X-Vault-Token": "s.SUPER-SECRET"},
+            None,
+            5.0,
+        )
+        assert status == 302, "the redirect is surfaced, not followed"
+        assert "headers" not in seen, "the redirect target was never contacted"
+    finally:
+        attacker.shutdown()
+        redirector.shutdown()
+
+
+def test_g153_a_signing_failure_before_dispatch_sends_nothing(tmp_path):
+    """The claim is signed first so an unsignable execution never leaves."""
+    from mandate.engine import ExecutionUnknown, MandateError
+
+    world = _engine_world(tmp_path)
+    world["engine"].enforcer = _FailAfter(world["kms"], after=1)  # claim signing fails
+    with pytest.raises(MandateError) as exc:
+        world["engine"].execute(world["receipt_id"], idempotency_key="idem-1")
+    assert not isinstance(exc.value, ExecutionUnknown)
+    assert "could not be signed" in str(exc.value)
+    assert world["upstream"].forwarded == [], "nothing may be dispatched"
+    # The key manager's own words stay out of a message a model can read.
+    assert "vault.internal" not in str(exc.value)
+
+
+def test_g154_a_signing_failure_after_dispatch_is_unknown_not_failed(tmp_path):
+    """The upstream already acted. Reporting a failed dispatch would invite
+    exactly the retry that must not happen."""
+    from mandate.engine import ExecutionUnknown
+
+    world = _engine_world(tmp_path)
+    world["engine"].enforcer = _FailAfter(world["kms"], after=2)  # final receipt fails
+    with pytest.raises(ExecutionUnknown) as exc:
+        world["engine"].execute(world["receipt_id"], idempotency_key="idem-2")
+    assert exc.value.receipt_id == world["receipt_id"]
+    assert world["upstream"].forwarded, "the call did go out"
+
+    # The receipt stays EXECUTING with its reservation, for the reconciler.
+    with world["engine"].ledger.tx() as tx:
+        row = tx.get_receipt(world["receipt_id"])
+    assert row["state"] == "EXECUTING"
+
+    # Once the key manager is back, the reconciler closes it out as unknown.
+    world["engine"].enforcer = world["kms"]
+    reconciled = world["engine"].reconcile_stale_executions(stale_after_s=-1)
+    assert world["receipt_id"] in reconciled
+
+
+def test_g155_the_guard_reports_an_unrecordable_dispatch_as_unknown(tmp_path):
+    """And keeps the key manager's error out of the model's tool output."""
+    upstream = FakeUpstream()
+    kms = FakeKms()
+    _, _, guard, _ = _guard_world(tmp_path, upstream, agent_signer=kms)
+    leak = "vault.internal.example:8200 token s.abc"
+    # Three signatures reach the enforcer on this path: the AUTHORIZED receipt,
+    # the EXECUTING claim, then the final one. Break the last.
+    guard.engine.enforcer = _FailAfter(guard.engine.enforcer, after=3, message=leak)
+
+    decision = guard.call("create_issue", {"repo": "beko/mandate"})
+    assert decision.outcome == "EXECUTION_UNKNOWN"
+    assert "Do not retry blindly" in decision.text
+    assert "could not dispatch" not in decision.text
+    assert leak not in decision.text and leak in (decision.detail or "")
+    assert upstream.calls, "the upstream was reached"
+
+
+def test_g156_the_guard_will_not_serve_with_an_enforcer_that_cannot_sign():
+    """`Engine` only asks the enforcer for its DID, which a remote signer can
+    answer from a published key without being able to sign at all."""
+    kp = KeyPair.generate()
+
+    class PublishesButCannotSign(FakeKms):
+        name = "half-broken"
+
+        def _sign_remote(self, payload: bytes) -> bytes:
+            raise SigningError("kms: AccessDeniedException on kms:Sign")
+
+    signer = PublishesButCannotSign(kp)
+    assert signer.did() == kp.did(), "naming itself works"
+    with pytest.raises(SigningError, match="AccessDenied"):
+        signer.check()
+
+
+class _FailAfter:
+    """A signer that works n times and then stops, to land a failure on one
+    specific signature inside `Engine.execute()`."""
+
+    name = "fail-after"
+
+    def __init__(self, inner, after: int, message: str = "key manager unreachable") -> None:
+        self._inner = inner
+        self._after = after
+        self._message = message
+        self.calls = 0
+
+    def did(self) -> str:
+        return self._inner.did()
+
+    def sign(self, payload: bytes) -> bytes:
+        self.calls += 1
+        if self.calls >= self._after:
+            raise SigningError(self._message)
+        return self._inner.sign(payload)
+
+    def sign_hex(self, payload: bytes) -> str:
+        return self.sign(payload).hex()
+
+
+class _RecordingExecutor:
+    def __init__(self) -> None:
+        self.forwarded: list[tuple] = []
+
+    def forward(self, route, method, path, body, idempotency_key):
+        from mandate.executor import ExecutionResult
+
+        self.forwarded.append((method, path, body))
+        return ExecutionResult("EXECUTED", 200, 3, "sha256:x", None)
+
+
+def _engine_world(tmp_path):
+    """An authorized receipt, one `execute()` away from dispatch."""
+    from datetime import timedelta
+
+    from mandate.crypto import utcnow
+    from mandate.routes import Route, RouteRegistry
+
+    kms = FakeKms()
+    upstream = _RecordingExecutor()
+    route = Route(
+        audience="mandate://local",
+        base_url="https://upstream.example",
+        allowed_methods=("POST",),
+        allowed_paths=("/do",),
+    )
+    engine = Engine(
+        ledger=Ledger(tmp_path / "m.sqlite"),
+        key_provider=SignerKeyProvider(kms),
+        routes=RouteRegistry([route]),
+        executor=upstream,
+    )
+    person, pkp = engine.register_principal("Belkis")
+    agent, akp = engine.register_agent("Bot", person.did, "Mandate", "t")
+    grant = engine.issue_grant(
+        person, pkp, agent, organization="Aslani GmbH", purpose="p",
+        scopes=["x.do"], not_after=utcnow() + timedelta(days=1),
+    )
+    receipt = engine.propose(akp, grant["id"], "x.do", summary="s")
+    assert receipt["outcome"] == "AUTHORIZED", receipt
+    return {
+        "engine": engine, "kms": kms, "upstream": upstream, "receipt_id": receipt["id"],
+    }

@@ -17,7 +17,7 @@ from uuid import uuid4
 
 from ..auth import DEFAULT_TENANT
 from ..crypto import sign_object
-from ..engine import Engine, MandateError
+from ..engine import Engine, ExecutionUnknown, MandateError
 from ..models import Intent
 from ..signing import Signer, SigningError
 from .mapping import MappingError, ToolMapping
@@ -126,6 +126,18 @@ class McpGuard:
         idem = uuid4().hex
         try:
             executed = self.engine.execute(receipt_id, idempotency_key=idem, tenant=self.tenant)
+        except ExecutionUnknown as exc:
+            # The call went out. Saying "could not dispatch" here would invite
+            # exactly the retry that must not happen.
+            return GuardDecision(
+                False,
+                f"The tool call was dispatched but its outcome could not be recorded. "
+                f"Receipt {exc.receipt_id or receipt_id} stays open and its budget stays "
+                f"reserved. Do not retry blindly — check whether the action took effect.",
+                "EXECUTION_UNKNOWN",
+                exc.receipt_id or receipt_id,
+                detail=str(exc.__cause__ or exc),
+            )
         except MandateError as exc:
             return GuardDecision(
                 False,

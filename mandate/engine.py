@@ -19,7 +19,7 @@ from .money import MoneyError
 from .payload import PayloadError, body_hash, build_payload, encode
 from .policy import constraint_minor, evaluate, intent_amount_minor
 from .routes import RouteRegistry
-from .signing import Signer
+from .signing import Signer, SigningError
 from .states import InvalidTransition
 from .validate import (
     ValidationError,
@@ -41,6 +41,20 @@ DEFAULT_EXECUTION_STALE_AFTER_S = 900
 
 class MandateError(Exception):
     pass
+
+
+class ExecutionUnknown(MandateError):
+    """The call was dispatched and its outcome could not be recorded.
+
+    Distinct from every other failure in `execute()` because the upstream may
+    already have acted. The receipt stays EXECUTING with its reservation held,
+    so `reconcile_stale_executions()` closes it out; the caller must be told
+    "unknown", never "not dispatched".
+    """
+
+    def __init__(self, message: str, receipt_id: str | None = None) -> None:
+        super().__init__(message)
+        self.receipt_id = receipt_id
 
 
 def _day() -> str:
@@ -661,6 +675,11 @@ class Engine:
                 tx.audit("execution.started", {"execution_id": execution_id, "receipt_id": receipt_id}, receipt_id)
         except StorageError as exc:
             raise MandateError("storage error") from exc
+        except SigningError as exc:
+            # Nothing has been dispatched: the claim is signed first precisely
+            # so an unsignable execution never leaves the gateway. The detail
+            # stays out of the message, which reaches a model as tool output.
+            raise MandateError("the execution claim could not be signed") from exc
 
         try:
             result = executor.forward(route, method, path, request_body, idem)
@@ -716,8 +735,15 @@ class Engine:
                     execution_id, receipt_id, stored_idem, result.state, new_body["execution"]
                 )
                 return signed
-        except StorageError as exc:
-            raise MandateError("storage error") from exc
+        except (StorageError, SigningError) as exc:
+            # The request has already gone out. Failing to sign or store the
+            # outcome says nothing about whether the upstream acted, so this
+            # cannot be reported as a failed dispatch. The receipt stays
+            # EXECUTING with its reservation held for the reconciler.
+            raise ExecutionUnknown(
+                "the call was dispatched but its outcome could not be recorded",
+                receipt_id,
+            ) from exc
 
     def _is_stale(self, started_at: str | None) -> bool:
         cutoff = self._now() - timedelta(seconds=self.execution_stale_after_s)

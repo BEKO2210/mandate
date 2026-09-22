@@ -97,9 +97,17 @@ all, and a signer that cannot sign refuses the call with nothing dispatched.
 
 Residual, and stated rather than fixed: a key manager does not stop code
 already running in the signing process from asking for signatures. It removes
-the exfiltratable secret, makes revocation effective, and produces a signing
-log the host cannot edit. The grant's limits remain what bound a live
-compromise.
+the exfiltratable secret and makes revocation effective; an audit trail comes
+from the provider, where that provider keeps one. The grant's limits remain
+what bound a live compromise.
+
+Independent review of this change found four further defects, all fixed here:
+a malformed configured DID escaped as `ValueError` past every `SigningError`
+handler; `urllib` forwarded `X-Vault-Token` to a redirect target, cross-origin
+and across an https-to-http downgrade (reproduced against a live server); a
+`SigningError` after dispatch was reported as a failed dispatch, inviting the
+retry that must not happen; and the enforcer signer was never proven to sign
+before the guard exposed its tools. Covered by G151-G156.
 
 Covered by G120-G149.
 

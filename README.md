@@ -27,9 +27,9 @@ producing a receipt that will not verify. A signer that cannot sign refuses the
 call — `SIGNER_UNAVAILABLE`, nothing dispatched.
 
 What this does **not** do: stop code already running in the signing process
-from asking for signatures. It removes the exfiltratable secret, makes
-revocation effective, and leaves a signing log the host cannot edit. See
-[docs/KMS.md](docs/KMS.md).
+from asking for signatures. It removes the exfiltratable secret and makes
+revocation effective; whether it also leaves an audit trail depends on the
+provider. See [docs/KMS.md](docs/KMS.md).
 
 ## What v0.5.0 established
 

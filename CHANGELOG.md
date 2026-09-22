@@ -50,6 +50,31 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   not an escape, because `ED25519_PH_SHA_512` is HashEdDSA and would not verify
   against the object's own `did:key`. Gate G150.
 
+### Fixed after independent review
+
+- A malformed configured `did` escaped as `ValueError` (or `AttributeError` for
+  a non-string) from inside `crypto.verify`, past every `SigningError` handler
+  in the guard and the startup checks. DIDs are validated at construction.
+  Gate G151.
+- **The Vault token was forwarded to a redirect target.** `urllib` copies
+  ordinary headers onto a redirected request — across origins, and across an
+  https-to-http downgrade — so a 302 from a compromised or spoofed Vault handed
+  `X-Vault-Token` to whoever the `Location` named. Reproduced against a live
+  server; redirects are now surfaced, never followed. Gate G152.
+- **A signing failure after dispatch was reported as a failed dispatch.**
+  `Engine.execute()` caught only `StorageError` around both signatures. After
+  `executor.forward()` the upstream may already have acted, so the new
+  `ExecutionUnknown` keeps the receipt EXECUTING with its reservation held and
+  tells the caller the outcome is unknown, never that nothing was sent. This
+  also corrects the pre-existing case where a post-dispatch `StorageError`
+  became `DISPATCH_FAILED`. Gates G153-G155.
+- The guard proves the **enforcer** signer can sign before exposing any tool.
+  `Engine` only asks it for its DID, which a remote signer can answer from a
+  published public key while lacking permission to sign. Gate G156.
+- Documentation no longer describes every configured signer as remote
+  (`kind: file` is accepted and keeps the key in-process), nor promises an
+  immutable signing log for providers that may not keep one.
+
 ### Still open
 
 A key manager does not bound a live compromise of the signing process — code

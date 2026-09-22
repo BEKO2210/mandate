@@ -43,7 +43,7 @@ import urllib.error
 import urllib.request
 from typing import Any, Callable, Protocol, runtime_checkable
 
-from .crypto import KeyPair, public_bytes_to_did, verify
+from .crypto import KeyPair, did_to_public_bytes, public_bytes_to_did, verify
 
 # Signed by `check()` only. It is not a Mandate object and carries no
 # authority, so a signature over it grants nothing — it only proves that the
@@ -57,6 +57,17 @@ DEFAULT_TIMEOUT = 10.0
 
 class SigningError(Exception):
     """The signer could not produce a signature that can be trusted."""
+
+
+def require_did(value: Any) -> str:
+    """A configured DID has to be one, before anything tries to verify with it."""
+    if not isinstance(value, str):
+        raise SigningError(f"did must be a string, not {type(value).__name__}")
+    try:
+        did_to_public_bytes(value)
+    except ValueError as exc:
+        raise SigningError(f"{value!r} is not an Ed25519 did:key: {exc}") from exc
+    return value
 
 
 @runtime_checkable
@@ -81,7 +92,11 @@ class RemoteSigner:
     name = "remote"
 
     def __init__(self, *, did: str | None = None) -> None:
-        self._did = did
+        # Checked here, not at first use: `crypto.verify` parses the DID
+        # outside its own try block, so a malformed one would surface as a
+        # ValueError from deep inside signing, past every SigningError handler
+        # a caller has.
+        self._did = require_did(did) if did is not None else None
         self._public: bytes | None = None
 
     # --- to implement -----------------------------------------------------
@@ -363,13 +378,30 @@ def _as_int(value: Any) -> int:
         return -1
 
 
+class _RefuseRedirects(urllib.request.HTTPRedirectHandler):
+    """Returning None makes urlopen surface the 3xx instead of following it.
+
+    urllib copies ordinary request headers onto a redirected request — across
+    origins, and across an https-to-http downgrade. `X-Vault-Token` is an
+    ordinary header, so a redirect from a compromised or spoofed Vault would
+    hand the token to whoever the Location names. Verified: a 302 to another
+    host received the token verbatim.
+    """
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+_OPENER = urllib.request.build_opener(_RefuseRedirects)
+
+
 def _urllib_transport(
     method: str, url: str, headers: dict[str, str], body: bytes | None,
     timeout: float = DEFAULT_TIMEOUT,
 ) -> tuple[int, bytes]:
     request = urllib.request.Request(url, data=body, headers=headers, method=method)
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
+        with _OPENER.open(request, timeout=timeout) as response:
             return response.status, response.read()
     except urllib.error.HTTPError as exc:
         return exc.code, exc.read()

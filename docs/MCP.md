@@ -55,9 +55,12 @@ mandate mcp init  --config guard.json   # principal, agent and grant, once
 mandate mcp serve --config guard.json   # stdio, for the agent runtime to spawn
 ```
 
-`init` writes development keys under `<store>/keys`. Add an `agent_signer`
-block and it writes no agent key at all — the key stays in AWS KMS, Cloud KMS,
-Vault or an HSM, and the guard signs by asking. See [KMS.md](KMS.md).
+`init` writes development keys under `<store>/keys`. An `agent_signer` block
+means the key already exists somewhere, so none is generated or written here.
+Where "somewhere" is depends on the kind: `aws-kms`, `gcp-kms`, `vault-transit`
+and `command` keep it out of this process entirely, while `file` points at a
+key this process reads — convenient, but the key is still in memory. See
+[KMS.md](KMS.md).
 
 A deployment that matters issues the grant elsewhere and gives the guard only
 access to the agent key.

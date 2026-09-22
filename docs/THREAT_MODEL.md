@@ -99,16 +99,21 @@ The caller is the local process that spawned the guard, not a remote client.
 ## Signing keys
 
 A signer is what can produce a signature, which is not the same thing as what
-holds the key. With `agent_signer` or `enforcer_signer` configured, the key
-lives in AWS KMS, Cloud KMS, Vault transit, or behind a command fronting an
-HSM, and the process signs by asking rather than by reading.
+holds the key. `agent_signer` and `enforcer_signer` name a kind: `aws-kms`,
+`gcp-kms`, `vault-transit` and `command` keep the key outside this process,
+which signs by asking rather than by reading. `kind: file` is also accepted and
+loads a private key into the process — the default behaviour, named explicitly.
+Everything below describes the first group.
 
 This does not stop an attacker who already runs code in the process: they can
 ask for signatures too, for as long as they are there, and the grant's limits
 — not the key's location — are what bound what those signatures can do. What
-it removes is the durable secret. There is nothing to exfiltrate, signing stops
-when access is revoked rather than continuing wherever the file was copied, and
-the key manager's audit log records signatures the host cannot edit.
+it removes is the durable secret. There is nothing to exfiltrate, and signing
+stops when access is revoked rather than continuing wherever the file was
+copied. Whether a signature also leaves an audit record the host cannot edit
+depends on the provider and how it is configured: AWS KMS, Cloud KMS and Vault
+log signing operations; a `command` signer logs whatever the command it fronts
+logs, which may be nothing.
 
 Every remote signature is verified against the signer's DID before it is
 returned, so a key manager holding a different key, or returning a DER-wrapped

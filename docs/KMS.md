@@ -23,15 +23,19 @@ handing the key back.
 | Read the key from the host | yes | no |
 | Sign while the host is compromised | yes | yes |
 | Sign **after** access is revoked | yes, forever | no |
-| Evidence that a signature happened | none | the key manager's audit log |
+| Evidence that a signature happened | none | the provider's audit log, where it keeps one |
 | Rotate | replace the file, re-issue every grant | new key version |
 
 The second row is the honest one. A key manager does not stop an attacker who
 owns the process from signing *while they own it* — the process can still ask
 for signatures, and Mandate's grant limits, not the key, are what bound the
-damage. What it removes is the durable secret: nothing exfiltrable, nothing
-that keeps working after you cut access, and a signing log the host cannot
-edit.
+damage. What it removes is the durable secret: nothing exfiltrable, and nothing
+that keeps working after you cut access.
+
+The audit row is worth less than it looks. AWS KMS, Cloud KMS and Vault record
+signing operations somewhere the host cannot edit; a `command` signer records
+whatever the command it fronts records, which may be nothing at all. Treat a
+signing log as a property of the provider you chose, not of this abstraction.
 
 ## Configure
 

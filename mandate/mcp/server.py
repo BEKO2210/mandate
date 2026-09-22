@@ -206,6 +206,13 @@ async def serve(config: GuardConfig) -> None:
 
             try:
                 engine, executor = build_engine(config, session.call_tool, exposed)
+                # `Engine` asks the enforcer for its DID, which a remote signer
+                # can answer from a published public key without being able to
+                # sign at all. Receipts are signed with this key, so prove it
+                # signs before any tool is exposed.
+                enforcer_check = getattr(engine.enforcer, "check", None)
+                if callable(enforcer_check):
+                    enforcer_check()
                 state = read_state(config) or bootstrap(config, engine)
                 signer = load_agent_signer(config)
             except SigningError as exc:
