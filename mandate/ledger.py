@@ -720,8 +720,19 @@ class _Tx:
         return [dict(r) for r in rows]
 
     def chain_tenants(self) -> list[str]:
+        """Every tenant a verifier has to look at — the union, not the chain.
+
+        Taking this from `chain` alone would skip a tenant that has receipts
+        and no entries, which is exactly the shape a receipt written around
+        the chain has. An operator could open a fresh tenant, insert a forged
+        receipt into it, and `mandate chain verify` would report nothing and
+        exit 0: the one tenant worth looking at is the one with no chain.
+        Review found the omission; it verified as an evasion.
+        """
         rows = self.l._conn.execute(
-            "SELECT DISTINCT tenant FROM chain ORDER BY tenant"
+            """SELECT tenant FROM chain
+               UNION SELECT tenant FROM receipts
+               ORDER BY tenant"""
         ).fetchall()
         return [r["tenant"] for r in rows]
 

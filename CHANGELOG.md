@@ -60,6 +60,12 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   that receipt into the baseline, inflating the number that bounds unchained
   inserts. The snapshot and the version bump are one `BEGIN IMMEDIATE`
   transaction with the version re-checked under the write lock. Gate G180.
+- **A tenant with no chain entries was never verified.** `mandate chain verify`
+  took its list of tenants from the `chain` table, which skips exactly the
+  shape a receipt written around the chain has: an operator could open a fresh
+  tenant, insert a forged receipt into it, and the command walked every other
+  tenant, found them intact and exited 0. Tenants are now the union of the
+  chain and the receipts. Gate G181.
 
 ### Still open
 

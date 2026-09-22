@@ -47,6 +47,7 @@ by reading the code. Gates G165–G168 exist because of it.
 | Reformat a receipt's JSON | **nothing — and correctly so.** The hash is canonical; whitespace is not tampering |
 | Add a duplicate JSON member | the strict parser: `json.loads` keeps the last of a repeated key, so prepending one changes the stored bytes while the canonical hash stays put |
 | Raise the legacy baseline in `meta` | genesis, which binds it |
+| Insert a receipt into a tenant that has no chain | the verifier enumerates tenants from the receipts as well as the chain |
 
 ## Verify
 
@@ -152,7 +153,10 @@ something does, the entry format is the thing to change.
 
 Chains are per tenant. One tenant's activity does not advance another's
 sequence, and genesis binds the tenant name, so an entry cannot be spliced from
-one chain into another. The cost is that a whole tenant's chain can be dropped
+one chain into another. A verifier given no `--tenant` therefore has to
+enumerate tenants from the *receipts* as well as the chain: a tenant with rows
+and no entries is not an empty tenant, it is the shape an insert around the
+chain has. The cost is that a whole tenant's chain can be dropped
 without any other tenant noticing — the same isolation the rest of the system
 already chose.
 

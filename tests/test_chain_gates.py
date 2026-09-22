@@ -1,4 +1,4 @@
-"""v0.7.0 receipt-chain gates G158-G180.
+"""v0.7.0 receipt-chain gates G158-G181.
 
 Signatures proved who wrote each receipt. They proved nothing about the set of
 receipts: an operator with database access could delete a row, roll a state
@@ -528,3 +528,38 @@ def test_g180_concurrent_migration_cannot_inflate_the_baseline(tmp_path):
     for ledger in opened:
         ledger.close()
     assert json.loads(baseline["value"]) == {"default": 3}, "one snapshot, taken once"
+
+
+def test_g181_a_tenant_with_no_chain_is_still_verified(tmp_path):
+    """The one tenant worth looking at is the one with no chain entries.
+
+    Enumerating tenants from the `chain` table alone skips exactly the shape a
+    receipt written around the chain has. An operator could open a fresh
+    tenant, insert a forged receipt into it, and the verifier would walk every
+    *other* tenant, find them intact and exit 0.
+    """
+    engine, db, ids, _ = _world(tmp_path, calls=2)
+    engine.ledger.close()
+
+    con = sqlite3.connect(db)
+    con.row_factory = sqlite3.Row
+    row = dict(con.execute("SELECT * FROM receipts LIMIT 1").fetchone())
+    con.close()
+    row["id"] = "rcpt_forged_in_a_new_tenant"
+    row["tenant"] = "shadow"
+    _sql(
+        db,
+        f"INSERT INTO receipts ({','.join(row)}) VALUES ({','.join('?' * len(row))})",
+        *row.values(),
+    )
+
+    engine = Engine(ledger=Ledger(db))
+    try:
+        with engine.ledger.tx() as tx:
+            tenants = tx.chain_tenants()
+        assert "shadow" in tenants, "a tenant with receipts is a tenant to verify"
+        report = engine.verify_chain("shadow")
+        assert not report.ok
+        assert any("never recorded" in m for m in report.mismatches), report.mismatches
+    finally:
+        engine.ledger.close()
