@@ -40,6 +40,40 @@ that bounds them instead of a paragraph that admits them.
   inside whichever block happened to run, which is how a finding ends up in a
   report that still says ok.
 
+### Fixed before review saw it
+
+- **The rotation marker was a hiding place.** Rotation gave the chain an entry
+  kind that reconciliation deliberately skips — and that skip is a hole if a
+  *receipt row* can wear the same name. A row whose id column is
+  `chain:signer-rotation`, copied from a genuine receipt so its proof still
+  verifies, was invisible twice over: `unchained_receipts` found the rotation
+  entry and called the row chained, and reconciliation skipped that entry so
+  nothing compared it. Closed from both sides — the count no longer credits a
+  rotation entry as cover for a receipt, and a receipt row carrying the
+  reserved id is a finding in itself. Introduced by this release's own
+  feature, found by asking what the reserved name could be turned into.
+  Gate G198.
+- A hostile anchor file was checked for the failure mode that has bitten this
+  code three times: it may add noise, and may not remove a finding or end the
+  run. Garbage seqs, a null tenant, unparseable lines and `1e400` all produce
+  findings while the real tampering in the same database is still reported.
+  Gate G199.
+
+- **The no-op rotation guard was half-right.** It compared the incoming key
+  against `head["signer"]` — but after a rotation the head *is* the rotation
+  entry, whose `signer` is the key that left and whose `outcome` is the key in
+  charge. A second, redundant rotation to the key already active therefore
+  passed. It now compares against the active signer. Found by review; a guard
+  that is right only before the first rotation is the worst kind of right.
+- **A hostile anchor could still end the run.** `check_anchors` used the
+  anchor's `seq` as a dictionary key, so a list-valued one raised `TypeError`
+  out of `verify_chain` and took every later finding with it — the fourth time
+  that shape has emptied this report. `seq` is now required to be an integer,
+  and anything else is reported as unusable rather than crashing or, worse,
+  being announced as a real anchor divergence. G199's own hostile file had
+  used only *hashable* garbage, so the negative control had been proving that
+  the verifier survives polite input.
+
 ### Still open
 
 A chain cannot prove what was removed from its own end *without an anchor*, so

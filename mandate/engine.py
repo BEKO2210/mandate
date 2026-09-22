@@ -214,6 +214,22 @@ class Engine:
                 raise MandateError(
                     "a chain with no entries has no signer to rotate away from"
                 )
+            # After a rotation the head *is* the rotation entry, whose `signer`
+            # is the key that left and whose `outcome` is the key now in
+            # charge. Comparing against `signer` therefore compared against
+            # the wrong key and let a second, redundant rotation through.
+            # Review found it; the guard was half-right, which is the worst
+            # kind of right.
+            active = head["outcome"] if chainlib.is_rotation(head) else head["signer"]
+            if new_signer == active:
+                # An operator who believes they rotated and did not is worse
+                # off than one who gets an error: they now trust a key that
+                # never changed. Refusing the no-op is the safer answer.
+                raise MandateError(
+                    f"the chain is already signed by {new_signer}; rotating to "
+                    f"the same key changes nothing and would hide that"
+                )
+
             entry = chainlib.rotation_body(
                 seq=head["seq"] + 1, tenant=tenant, prev=head["entry_hash"],
                 new_signer=new_signer, recorded_at=iso(self._now()),

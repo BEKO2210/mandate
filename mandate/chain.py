@@ -334,6 +334,18 @@ def check_anchors(entries: list[dict[str, Any]], anchors: list[dict[str, Any]],
         if anchor.get("tenant") != tenant:
             continue
         seq, expected = anchor.get("seq"), anchor.get("entry_hash")
+        if type(seq) is not int:
+            # `by_seq[seq]` needs a hashable key, and this file comes from
+            # outside the system. A list-valued seq raised TypeError straight
+            # out of verify_chain, taking every later finding with it — the
+            # fourth time that shape has emptied this report. `type(...) is
+            # int` rather than isinstance, because a bool is not a sequence
+            # number either.
+            problems.append(
+                f"an anchor for this tenant has an unusable seq {seq!r}; "
+                f"it cannot be checked against the chain"
+            )
+            continue
         entry = by_seq.get(seq)
         if entry is None:
             problems.append(
@@ -422,6 +434,19 @@ def verify_chain(
             signer_did=expect_signer,
         )
         if problem:
+            # A chain that rotates has more than one signer, so an operator who
+            # knows only the current key and passes it to --expect-signer gets
+            # "BROKEN" for a perfectly healthy chain. Saying which key to pass
+            # is the difference between a finding and a false alarm — this
+            # project has already shipped a verifier that cried wolf once.
+            if signer_did is not None and "was signed by" in problem:
+                later = [e for e in entries[index - 1:]
+                         if is_rotation(e) and e.get("outcome") == signer_did]
+                if later:
+                    problem += (
+                        f"; that key takes over at seq {later[0]['seq']} — "
+                        f"--expect-signer names the key the chain starts with"
+                    )
             return ChainReport(
                 tenant=tenant, ok=False, length=index - 1, signer=expect_signer,
                 legacy_receipts=legacy_receipts, head=prev if index > 1 else None,
@@ -469,6 +494,15 @@ def verify_chain(
         # secret — only the DID the proof already names — so every receipt is
         # asked, chained or not.
         for receipt_id, row in sorted(stored.items()):
+            if receipt_id == ROTATION_ID:
+                # No receipt is ever created with this id — they are `rcpt_…`.
+                # A row carrying the marker is an attempt to hide behind the
+                # one entry kind that reconciliation deliberately skips.
+                report.mismatches.append(
+                    f"a receipt row carries the reserved id {ROTATION_ID!r}, "
+                    f"which only a chain entry may use"
+                )
+                continue
             if row.get("error") or row.get("proof_ok", True):
                 continue
             report.mismatches.append(

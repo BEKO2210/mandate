@@ -1,4 +1,4 @@
-"""v0.7.0 receipt-chain gates G158-G197.
+"""v0.7.0 receipt-chain gates G158-G201.
 
 Signatures proved who wrote each receipt. They proved nothing about the set of
 receipts: an operator with database access could delete a row, roll a state
@@ -21,7 +21,7 @@ import pytest
 
 from mandate import chain as chainlib
 from mandate.crypto import KeyPair, utcnow, verify_object
-from mandate.engine import Engine
+from mandate.engine import Engine, MandateError
 from mandate.executor import ExecutionResult
 from mandate.ledger import Ledger, StorageError
 from mandate.routes import Route, RouteRegistry
@@ -1045,5 +1045,145 @@ def test_g197_a_rotation_entry_is_not_a_claim_about_any_receipt(tmp_path):
         with pytest.raises(chainlib.ChainError):
             chainlib.rotation_body(seq=1, tenant="default", prev="x",
                                    new_signer="not-a-did", recorded_at="now")
+    finally:
+        engine.ledger.close()
+
+
+def test_g198_the_reserved_rotation_id_is_not_a_hiding_place(tmp_path):
+    """Rotation gave the chain an entry that reconciliation deliberately skips.
+    That skip is a hole if a *receipt row* can wear the same name.
+
+    The row here is a copy of a genuine receipt with only its id **column**
+    renamed, so the body — and therefore its proof — still verifies. Before
+    the fix it was invisible twice over: `unchained_receipts` found the
+    rotation entry and called the row chained, and `reconcile` skipped the
+    rotation entry so nothing ever compared it. I introduced this with the
+    feature and found it by asking what the reserved name could be turned
+    into.
+    """
+    engine, db, ids, _ = _world(tmp_path, calls=3)
+    new = KeyPair.generate()
+    try:
+        engine.rotate_signer(new.did())
+        engine.enforcer = new
+        assert engine.verify_chain().ok, "a rotated chain must start clean"
+
+        con = sqlite3.connect(db)
+        con.row_factory = sqlite3.Row
+        row = dict(con.execute("SELECT * FROM receipts LIMIT 1").fetchone())
+        con.close()
+        row["id"] = chainlib.ROTATION_ID
+        row["nonce"] = "nonce-smuggled"
+        _sql(db,
+             f"INSERT INTO receipts ({','.join(row)}) "
+             f"VALUES ({','.join('?' * len(row))})", *row.values())
+
+        report = engine.verify_chain()
+        assert not report.ok
+        assert any("reserved id" in m for m in report.mismatches), report.mismatches
+        # And from the other side: the count must stop crediting a rotation
+        # entry as cover for a receipt.
+        assert any("never recorded" in m for m in report.mismatches), report.mismatches
+    finally:
+        engine.ledger.close()
+
+
+def test_g199_a_hostile_anchor_file_cannot_silence_the_verifier(tmp_path):
+    """The anchor file is the one input a verifier reads from outside itself.
+
+    It must fail closed: garbage in it may add noise, and may never remove a
+    finding or end the run. The same class — one bad input emptying the whole
+    report — has bitten this code three times.
+    """
+    from mandate.cli import _read_anchors
+
+    engine, db, ids, _ = _world(tmp_path, calls=3)
+    engine.ledger.close()
+    _sql(db, "UPDATE receipts SET state='DENIED' WHERE id=?", ids[1])
+
+    path = tmp_path / "hostile.jsonl"
+    path.write_text("\n".join([
+        '{"tenant": "default", "seq": "twelve", "entry_hash": "x"}',
+        '{"tenant": null, "seq": 1, "entry_hash": null}',
+        '{"tenant": "default", "seq": 99999999, "entry_hash": "sha256:0"}',
+        '{"tenant": "default"}',
+        "not json at all",
+        "[1,2,3]",
+        '{"tenant": "default", "seq": 1e400, "entry_hash": "x"}',
+        "",
+        '{"tenant": "default", "seq": -1, "entry_hash": "x"}',
+        # Unhashable seqs. The first version of this gate used only scalars —
+        # every one of them hashable — so it proved the verifier survives
+        # *polite* garbage. A list reached `by_seq.get(seq)` and raised
+        # TypeError out of verify_chain, emptying the report. Review found
+        # what my own negative control had been too gentle to.
+        '{"tenant": "default", "seq": [1, 2], "entry_hash": "x"}',
+        '{"tenant": "default", "seq": {"a": 1}, "entry_hash": "x"}',
+        '{"tenant": "default", "seq": true, "entry_hash": "x"}',
+    ]) + "\n\n\n", encoding="utf-8")
+
+    anchors = _read_anchors(str(path))
+    engine = Engine(ledger=Ledger(db))
+    try:
+        report = engine.verify_chain(anchors=anchors)
+        assert not report.ok
+        # The point of the gate: the real tampering survives the noise.
+        assert any("is stored as DENIED" in m for m in report.mismatches), report.mismatches
+        # Six: the three unhashable ones plus 'twelve', a missing seq and
+        # 1e400. Before the type check those four were reported as "the chain
+        # no longer reaches it", which claims a real anchor diverged — a
+        # verifier inventing a finding is its own kind of lie. Only -1 and
+        # 99999999 are integers, so only those two are compared for real.
+        assert sum("unusable seq" in m for m in report.mismatches) == 6, report.mismatches
+        assert sum("no longer reaches it" in m for m in report.mismatches) == 2, report.mismatches
+    finally:
+        engine.ledger.close()
+
+
+def test_g200_a_rotation_that_rotates_nothing_is_refused(tmp_path):
+    """An operator who believes they rotated and did not is worse off than one
+    who gets an error: they now trust a key that never changed."""
+    engine, db, ids, _ = _world(tmp_path, calls=2)
+    try:
+        with pytest.raises(MandateError, match="changes nothing"):
+            engine.rotate_signer(engine.enforcer.did())
+        assert engine.verify_chain().ok, "the refusal must not have written anything"
+
+        # And again once a rotation has happened, because then the head *is*
+        # the rotation entry: its `signer` is the key that left and its
+        # `outcome` is the key in charge. The first version of this guard
+        # compared against `signer`, so it let a redundant B->B rotation
+        # through — half-right, which is the worst kind of right.
+        second = KeyPair.generate()
+        engine.rotate_signer(second.did())
+        engine.enforcer = second
+        with pytest.raises(MandateError, match="changes nothing"):
+            engine.rotate_signer(second.did())
+        report = engine.verify_chain()
+        assert report.ok, report.summary()
+        assert report.rotations == 1, "the refused rotation must not have been written"
+    finally:
+        engine.ledger.close()
+
+
+def test_g201_expect_signer_explains_itself_on_a_rotated_chain(tmp_path):
+    """A rotated chain has more than one signer. An operator who knows only the
+    current key and passes it gets BROKEN for a healthy chain — the cries-wolf
+    failure this project has already shipped once."""
+    engine, db, ids, _ = _world(tmp_path, calls=2)
+    first = engine.enforcer.did()
+    new = KeyPair.generate()
+    try:
+        engine.rotate_signer(new.did())
+        engine.enforcer = new
+
+        assert engine.verify_chain().ok
+        assert engine.verify_chain(expect_signer=first).ok, (
+            "--expect-signer names the key the chain starts with"
+        )
+        wrong = engine.verify_chain(expect_signer=new.did())
+        assert not wrong.ok
+        assert "takes over at seq" in (wrong.reason or ""), wrong.reason
+        assert "starts with" in (wrong.reason or ""), wrong.reason
     finally:
         engine.ledger.close()
