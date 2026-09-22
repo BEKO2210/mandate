@@ -3,6 +3,27 @@
 All notable changes to this project are documented here.
 This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.1] — 2026-09-22
+
+### Fixed
+
+- **The landing page advertised 218 gates while the suite had 222.** Nobody
+  lied; the number was typed once and the suite grew. That is the ordinary way
+  a page drifts, and it is why the number now has to be *derived*. A project
+  whose argument is that claims should be checkable rather than believed
+  cannot leave the first claim a visitor could check unchecked. New gates pin
+  the advertised count, every gate id the page cites, and the version in the
+  nav badge and footer — the page had also run three releases behind before
+  this.
+- **The anchor file's shape is now bounded at the reader.** That path had been
+  wrong twice in two different ways — a `seq` that could not be hashed crashed
+  the run, and garbage values were announced as real anchor divergence — both
+  caught downstream, one field at a time. `mandate chain anchor` writes
+  `{tenant, seq, entry_hash}`, so anything else is reported with its line
+  number and dropped. A well-formed anchor that simply disagrees with the
+  chain is still a finding, not garbage: shape is the reader's business,
+  content is the verifier's.
+
 ## [0.8.0] — 2026-09-22
 
 Closes what the last three releases listed as residual risk. Two of the three

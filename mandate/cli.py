@@ -168,13 +168,40 @@ def _mcp(args) -> int:
     return 2
 
 
+#: What `mandate chain anchor` writes, and therefore the only shape this
+#: reader accepts. `type(...) is` rather than isinstance, because a bool is
+#: not a sequence number.
+ANCHOR_SHAPE = {"tenant": str, "seq": int, "entry_hash": str}
+
+
+def _anchor_problem(record: dict) -> str | None:
+    """Why this is not an anchor, or None.
+
+    The anchor file is the one input a verifier reads from outside itself, and
+    it has been wrong twice in two different ways: a `seq` that could not be
+    hashed crashed the run, and garbage values were announced as real anchor
+    divergence. Both were caught downstream, one field at a time, which is
+    guessing at what hostile input looks like. Bounding the shape at the door
+    is the answer that does not need a new guess for the next field.
+    """
+    for key, want in ANCHOR_SHAPE.items():
+        if key not in record:
+            return f"has no {key}"
+        if type(record[key]) is not want:
+            return f"has a {type(record[key]).__name__} {key}, expected {want.__name__}"
+    if record["seq"] < 1:
+        return f"has seq {record['seq']}, and sequence numbers start at 1"
+    return None
+
+
 def _read_anchors(path: str | None) -> list[dict]:
     """Heads written down earlier, one JSON object per line.
 
     A line that cannot be read is reported and skipped rather than fatal: the
     file lives outside this system's control by design, so a verifier that
     dies on one bad line is a verifier an operator can silence with one bad
-    line.
+    line. A line that is readable but is not an anchor is reported here, with
+    its number, rather than downstream where the context is gone.
     """
     if not path:
         return []
@@ -188,10 +215,14 @@ def _read_anchors(path: str | None) -> list[dict]:
         except ValueError as exc:
             print(f"  ! anchor file line {number} is unreadable: {exc}")
             continue
-        if isinstance(record, dict):
-            out.append(record)
-        else:
+        if not isinstance(record, dict):
             print(f"  ! anchor file line {number} is not an object")
+            continue
+        problem = _anchor_problem(record)
+        if problem:
+            print(f"  ! anchor file line {number} {problem}; it is not an anchor")
+            continue
+        out.append(record)
     return out
 
 

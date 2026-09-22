@@ -1123,19 +1123,37 @@ def test_g199_a_hostile_anchor_file_cannot_silence_the_verifier(tmp_path):
     ]) + "\n\n\n", encoding="utf-8")
 
     anchors = _read_anchors(str(path))
+
+    # Exactly one record in that file is an anchor. The rest are missing a
+    # field, have the wrong type in one, or carry a seq below 1, and the
+    # reader drops them by shape. The survivor is well formed and simply
+    # wrong — seq 99999999 is a *claim*, to be compared and reported, not
+    # garbage to be thrown away. Shape is the reader's business; content is
+    # the verifier's, and conflating the two is how a check ends up either
+    # crashing on junk or discarding evidence.
+    assert [a["seq"] for a in anchors] == [99999999], anchors
+
     engine = Engine(ledger=Ledger(db))
     try:
         report = engine.verify_chain(anchors=anchors)
         assert not report.ok
-        # The point of the gate: the real tampering survives the noise.
+        # The invariant, and the only thing this gate is really about: the
+        # real tampering survives the file. Asserting counts of particular
+        # messages pinned where validation happens, not what it achieves —
+        # and moving the validation one layer earlier broke the gate without
+        # weakening the code.
         assert any("is stored as DENIED" in m for m in report.mismatches), report.mismatches
-        # Six: the three unhashable ones plus 'twelve', a missing seq and
-        # 1e400. Before the type check those four were reported as "the chain
-        # no longer reaches it", which claims a real anchor diverged — a
-        # verifier inventing a finding is its own kind of lie. Only -1 and
-        # 99999999 are integers, so only those two are compared for real.
-        assert sum("unusable seq" in m for m in report.mismatches) == 6, report.mismatches
-        assert sum("no longer reaches it" in m for m in report.mismatches) == 2, report.mismatches
+        # And the one real anchor is still checked, and still disagrees.
+        assert sum("anchor recorded seq 99999999" in m
+                   for m in report.mismatches) == 1, report.mismatches
+
+        # Defence in depth: a caller reaching `check_anchors` directly, past
+        # the reader, must still not be able to crash it.
+        direct = chainlib.check_anchors([], [
+            {"tenant": "default", "seq": [1, 2], "entry_hash": "x"},
+            {"tenant": "default", "seq": {"a": 1}, "entry_hash": "x"},
+        ], "default")
+        assert len(direct) == 2 and all("unusable seq" in m for m in direct), direct
     finally:
         engine.ledger.close()
 
