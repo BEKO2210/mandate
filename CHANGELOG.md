@@ -41,6 +41,14 @@ ordinary tampering in the same database that went unreported because of it.
   encodes a guess about what malformed input can do, and that guess was wrong
   again. Gates G186, G189.
 
+- **G189 proved less than it looked like it proved.** It asserted the exit
+  status alone, so a `mandate verify` that printed `VALID` and returned 1
+  would have satisfied it. It now asserts the printed verdict in both
+  directions — `INVALID` for each hostile file, and `VALID` with exit 0 for a
+  genuine one, without which the gate is satisfied by a command that condemns
+  everything. A test that overstates what it checks is the same failure as a
+  verifier that says nothing.
+
 Gates G186-G189. Full suite: 210 passed on Python 3.11 and 3.13.
 
 ## [0.7.0] — 2026-09-22

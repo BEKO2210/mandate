@@ -20,7 +20,7 @@ from datetime import timedelta
 import pytest
 
 from mandate import chain as chainlib
-from mandate.crypto import KeyPair, utcnow, verify_object
+from mandate.crypto import KeyPair, sign_object, utcnow, verify_object
 from mandate.engine import Engine
 from mandate.executor import ExecutionResult
 from mandate.ledger import Ledger, StorageError
@@ -772,24 +772,40 @@ def test_g188_a_body_the_interpreter_can_parse_is_still_reconciled(tmp_path):
     assert any("DENIED" in m for m in report.mismatches), report.mismatches
 
 
-def test_g189_the_file_verifier_says_invalid_instead_of_crashing(tmp_path):
+def test_g189_the_file_verifier_says_invalid_instead_of_crashing(tmp_path, capsys):
     """`mandate verify` is the command an auditor runs on a file they were sent.
 
     A traceback there is not a verdict. The file is hostile input by
     definition — it is the thing being questioned — so every malformed shape
     has to come back as INVALID with a non-zero exit, not as a stack trace
     that says nothing about whether the receipt is genuine.
+
+    The printed word is asserted, not only the exit code. An earlier version
+    of this gate checked the status alone and would have passed a command
+    that printed VALID and returned 1 — a test that proves less than it looks
+    like it proves, which in evidence code is the same failure as a verifier
+    that says nothing. Review caught it.
     """
     from mandate.cli import main
 
-    cases = [
+    hostile = [
         {"id": "x", "proof": {"verificationMethod": "not-a-did", "proofValue": ""}},
         {"id": "x", "proof": {"verificationMethod": "did:web:example.com",
                               "proofValue": ""}},
         {"id": "x", "proof": []},
         {"id": "x"},
     ]
-    for i, obj in enumerate(cases):
+    for i, obj in enumerate(hostile):
         path = tmp_path / f"hostile-{i}.json"
         path.write_text(json.dumps(obj), encoding="utf-8")
         assert main(["verify", str(path)]) == 1, obj
+        assert capsys.readouterr().out == "INVALID\n", obj
+
+    # The other half: a genuine receipt must still come back VALID and 0, or
+    # the gate above is satisfied by a command that condemns everything.
+    kp = KeyPair.generate()
+    signed = sign_object(kp, {"id": "rcpt_real", "summary": "a real one"})
+    good = tmp_path / "genuine.json"
+    good.write_text(json.dumps(signed), encoding="utf-8")
+    assert main(["verify", str(good)]) == 0
+    assert capsys.readouterr().out == "VALID\n"
