@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 # Intent fields an operation may put into an upstream request body. The agent
 # chooses their values but never their names, and nothing outside this set can

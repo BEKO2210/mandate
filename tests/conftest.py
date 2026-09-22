@@ -7,7 +7,7 @@ import pytest
 from mandate.crypto import utcnow
 from mandate.engine import Engine
 from mandate.executor import UpstreamExecutor
-from mandate.keys import InMemoryKeyProvider, PersistedDevKeyProvider
+from mandate.keys import PersistedDevKeyProvider
 from mandate.models import Constraint
 from mandate.routes import Route, RouteRegistry
 from mandate.store import Store

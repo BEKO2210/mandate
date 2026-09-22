@@ -342,8 +342,8 @@ def test_g99_cli_issues_lists_and_disables_keys(tmp_path, capsys):
     assert main(["keys", "new", "--db", db, "--tenant", "acme", "--name", "ci",
                  "--scopes", "intents:write,receipts:read"]) == 0
     out = capsys.readouterr().out
-    token = [l.split(": ", 1)[1].strip() for l in out.splitlines() if l.startswith("token")][0]
-    key_id = [l.split(": ", 1)[1].strip() for l in out.splitlines() if l.startswith("key id")][0]
+    token = [ln.split(": ", 1)[1].strip() for ln in out.splitlines() if ln.startswith("token")][0]
+    key_id = [ln.split(": ", 1)[1].strip() for ln in out.splitlines() if ln.startswith("key id")][0]
 
     ledger = Ledger(db)
     try:

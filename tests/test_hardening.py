@@ -10,7 +10,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from mandate.crypto import sign_object, utcnow
-from mandate.engine import Engine, MandateError
+from mandate.engine import Engine
 from mandate.executor import UpstreamExecutor, assert_safe_destination
 from mandate.auth import OpenAccess
 from mandate.gateway import create_app
