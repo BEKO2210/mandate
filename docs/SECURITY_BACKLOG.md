@@ -158,7 +158,9 @@ Covered by G158-G180.
 - The chain is signed by the enforcer key; a compromise of that key allows
   history and chain to be re-signed together
 - The legacy baseline is trusted on first use: a tenant whose chain is still
-  empty has no entry for genesis to break
+  empty has no entry for genesis to break. What that window buys an operator
+  is bounded by the proof check — a licensed row is still read, and a row
+  nobody signed is still a finding
 - The request hash binds what the gateway sent, not what the upstream received
 - Routes and operations are configured in code, not from a file or admin API;
   the HTTP gateway therefore takes its enforcer signer as a constructor

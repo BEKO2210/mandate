@@ -26,7 +26,12 @@ means forging a signature on each of them.
 
 **The chain is reconciled against the receipts.** Every receipt the chain
 records must still exist, still be in the state the last entry gave it, and
-still hash to what that entry recorded.
+still hash to what that entry recorded. Every receipt in the tenant — chained
+or not — must also carry a proof that verifies against the key that proof
+names. The chain says what the *set* of receipts is; it never asked whether a
+row in that set was ever signed, and a fabricated row in a tenant the chain
+does not cover sat unexamined until it was. Verifying a proof needs no secret,
+so there was no reason not to ask.
 
 The second half is not an extra. The first version of this feature had only the
 first, and it caught *nothing*: deleting a receipt row left the chain perfectly
@@ -48,6 +53,7 @@ by reading the code. Gates G165–G168 exist because of it.
 | Add a duplicate JSON member | the strict parser: `json.loads` keeps the last of a repeated key, so prepending one changes the stored bytes while the canonical hash stays put |
 | Raise the legacy baseline in `meta` | genesis, which binds it |
 | Insert a receipt into a tenant that has no chain | the verifier enumerates tenants from the receipts as well as the chain |
+| Fabricate a receipt outright | its own proof, which no count can licence |
 
 ## Verify
 
@@ -138,6 +144,11 @@ is bound into the chain's genesis instead: entry 1 points at
 `sha256(prefix + tenant + ":" + baseline)`, so changing the baseline breaks the
 chain at its first link.
 
+A tenant whose chain is still empty has no entry 1 to break, so there the
+baseline can still be raised. What it buys is nothing: a licensed row is still
+read, and a row nobody signed is still a finding. The count is not the last
+line of defence — the receipt's own signature is.
+
 The baseline is therefore **trusted on first use** and immutable in effect from
 the first chained write onwards. A tenant whose chain is still empty has
 nothing to break, which is the one window where it can still be set. Review
@@ -162,8 +173,8 @@ already chose.
 
 ## Cost
 
-Verification loads a tenant's entries and rehashes its receipts, so it is
-linear in the ledger and meant to be run deliberately — from a cron job, an
+Verification loads a tenant's entries, rehashes its receipts and checks one
+signature per receipt, so it is linear in the ledger and meant to be run deliberately — from a cron job, an
 audit, an incident — not per request. Writing costs one extra signature per
 receipt state, on the same key and inside the same transaction: a receipt and
 its chain entry land together or not at all.

@@ -93,6 +93,8 @@ def genesis(tenant: str, legacy_receipts: int = 0) -> str:
     The baseline is therefore trusted on first use and immutable in effect
     from the first chained write onwards. A tenant whose chain is still empty
     has nothing to break, which is the one window where it can still be set.
+    That window buys little: `verify_chain` reads every receipt's own proof,
+    so a licensed row that nobody signed is still a finding.
     """
     seed = GENESIS_PREFIX + tenant.encode("utf-8") + b":" + str(int(legacy_receipts)).encode()
     return "sha256:" + hashlib.sha256(seed).hexdigest()
@@ -165,7 +167,7 @@ def check_entry(entry: dict[str, Any], *, expect_seq: int, expect_prev: str,
 
 
 def reconcile(
-    entries: list[dict[str, Any]], stored: dict[str, dict[str, str]]
+    entries: list[dict[str, Any]], stored: dict[str, dict[str, Any]]
 ) -> list[str]:
     """Compare what the chain recorded against what the database now holds.
 
@@ -248,7 +250,7 @@ class ChainReport:
 def verify_chain(
     entries: list[dict[str, Any]], tenant: str, *,
     signer_did: str | None = None, expect_head: str | None = None,
-    stored: dict[str, dict[str, str]] | None = None,
+    stored: dict[str, dict[str, Any]] | None = None,
     unchained_receipts: int = 0, legacy_receipts: int = 0,
 ) -> ChainReport:
     """Walk a tenant's chain from genesis and report the first break.
@@ -298,6 +300,18 @@ def verify_chain(
         )
     if stored is not None:
         report.mismatches = reconcile(entries, stored)
+        # The chain says what the set of receipts is. It never asked whether a
+        # row in that set was ever signed, so a fabricated receipt in a tenant
+        # the chain does not cover sat unexamined. Verifying a proof needs no
+        # secret — only the DID the proof already names — so every receipt is
+        # asked, chained or not.
+        for receipt_id, row in sorted(stored.items()):
+            if row.get("error") or row.get("proof_ok", True):
+                continue
+            report.mismatches.append(
+                f"receipt {receipt_id} does not carry a signature that verifies "
+                f"against the key its own proof names"
+            )
         if report.mismatches:
             report.ok = False
 

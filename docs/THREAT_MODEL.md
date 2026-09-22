@@ -156,7 +156,9 @@ Three limits, none of them fixable from inside the database:
 * **The baseline's first write.** The number of receipts predating the chain
   bounds how many unchained ones are tolerated, and is bound into genesis so it
   cannot be raised afterwards. Before a tenant's first chained write there is
-  no entry to break, so that one moment is trusted on first use.
+  no entry to break, so that one moment is trusted on first use. Raising it
+  buys only permission for a row to exist unchained; the row's own proof is
+  still verified, so a fabricated one is still a finding.
 * **Per-tenant chains.** A whole tenant's history can be dropped without any
   other tenant's chain noticing — the same isolation boundary the rest of the
   system already draws.

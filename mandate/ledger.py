@@ -11,7 +11,7 @@ from typing import Any
 
 from .chain import body_hash as chain_body_hash
 from .chain import loads_strict
-from .crypto import iso, utcnow
+from .crypto import iso, utcnow, verify_object
 from .money import exponent, from_minor
 from .states import InvalidTransition, assert_transition
 
@@ -736,14 +736,20 @@ class _Tx:
         ).fetchall()
         return [r["tenant"] for r in rows]
 
-    def receipt_digests(self, tenant: str) -> dict[str, dict[str, str]]:
-        """What the database now says about each receipt, hashed as stored.
+    def receipt_digests(self, tenant: str) -> dict[str, dict[str, Any]]:
+        """What the database now says about each receipt, hashed and checked.
 
         The hash is recomputed from the stored body rather than read from a
         column, so an operator who edits the body cannot also edit a cached
         digest to match.
+
+        Each receipt's own proof is verified here too. The chain proves what
+        the set of receipts is; it never asked whether a row in it was ever
+        signed. A fabricated receipt in a tenant the chain does not cover
+        was sitting unexamined — `verify_object` needs no secret, only the
+        DID the proof already names, so there was no reason not to ask.
         """
-        out: dict[str, dict[str, str]] = {}
+        out: dict[str, dict[str, Any]] = {}
         for row in self.l._conn.execute(
             "SELECT id, state, body FROM receipts WHERE tenant=?", (tenant,)
         ):
@@ -758,6 +764,7 @@ class _Tx:
             out[row["id"]] = {
                 "state": row["state"],
                 "body_hash": chain_body_hash(body),
+                "proof_ok": verify_object(body) if isinstance(body, dict) else False,
             }
         return out
 

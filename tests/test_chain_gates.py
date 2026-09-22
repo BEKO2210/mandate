@@ -1,4 +1,4 @@
-"""v0.7.0 receipt-chain gates G158-G181.
+"""v0.7.0 receipt-chain gates G158-G183.
 
 Signatures proved who wrote each receipt. They proved nothing about the set of
 receipts: an operator with database access could delete a row, roll a state
@@ -561,5 +561,65 @@ def test_g181_a_tenant_with_no_chain_is_still_verified(tmp_path):
         report = engine.verify_chain("shadow")
         assert not report.ok
         assert any("never recorded" in m for m in report.mismatches), report.mismatches
+    finally:
+        engine.ledger.close()
+
+
+def test_g182_a_fabricated_receipt_is_caught_by_its_own_proof(tmp_path):
+    """The count is not the last line of defence — the receipt's signature is.
+
+    An operator who licences an unchained insert by raising the baseline for a
+    tenant whose chain is still empty defeats every count-based check. What
+    they cannot do without the enforcer key is make the row's own proof
+    verify, and verifying it needs no secret: the DID is in the proof.
+    """
+    engine, db, ids, _ = _world(tmp_path, calls=2)
+    engine.ledger.close()
+
+    con = sqlite3.connect(db)
+    con.row_factory = sqlite3.Row
+    row = dict(con.execute("SELECT * FROM receipts LIMIT 1").fetchone())
+    con.close()
+
+    body = json.loads(row["body"])
+    body["id"] = row["id"] = "rcpt_fabricated"
+    body["summary"] = "pay the operator"
+    row["body"] = json.dumps(body)
+    row["tenant"] = "shadow"
+    _sql(
+        db,
+        f"INSERT INTO receipts ({','.join(row)}) VALUES ({','.join('?' * len(row))})",
+        *row.values(),
+    )
+    # ... and licence it, which the count check has no way to refuse.
+    _sql(
+        db,
+        "UPDATE meta SET value=? WHERE key='chain_legacy'",
+        json.dumps({"default": 0, "shadow": 1}),
+    )
+
+    engine = Engine(ledger=Ledger(db))
+    try:
+        report = engine.verify_chain("shadow")
+        assert not report.ok, "a receipt nobody signed is not evidence"
+        assert any("does not carry a signature" in m for m in report.mismatches), report
+        assert engine.verify_chain("default").ok, "and no false alarm next door"
+    finally:
+        engine.ledger.close()
+
+
+def test_g183_a_real_receipt_never_trips_the_proof_check(tmp_path):
+    """The other half of G182: a verifier that cries wolf is worse than none.
+
+    Key rotation must not turn healthy receipts into findings either, so the
+    check is against the DID the proof itself names, not against a current one.
+    """
+    engine, db, ids, _ = _world(tmp_path, calls=3)
+    try:
+        with engine.ledger.tx() as tx:
+            digests = tx.receipt_digests("default")
+        assert digests, "the world must have receipts"
+        assert all(d["proof_ok"] for d in digests.values()), digests
+        assert engine.verify_chain("default").ok
     finally:
         engine.ledger.close()

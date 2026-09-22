@@ -66,6 +66,13 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   tenant, insert a forged receipt into it, and the command walked every other
   tenant, found them intact and exited 0. Tenants are now the union of the
   chain and the receipts. Gate G181.
+- **Nothing verified a stored receipt's own proof.** The chain establishes
+  what the set of receipts is; it never asked whether a row in that set was
+  ever signed. A fabricated receipt in a tenant whose chain was empty — and
+  whose count an operator can licence by raising the baseline, the one window
+  genesis cannot close — stood unexamined and the verifier exited 0.
+  Reconciliation now verifies every receipt's proof against the key that proof
+  names, chained or not, which needs no secret. Gates G182, G183.
 
 ### Still open
 
