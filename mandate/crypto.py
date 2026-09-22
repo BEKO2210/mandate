@@ -4,10 +4,13 @@ import hashlib
 import json
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey, Ed25519PublicKey
 from cryptography.hazmat.primitives.serialization import Encoding, NoEncryption, PrivateFormat, PublicFormat
+
+if TYPE_CHECKING:  # a Signer may be a KeyPair or a key manager; see signing.py
+    from .signing import Signer
 
 _B58 = b"123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
 _ED25519_MULTICODEC = b"\xed\x01"
@@ -117,13 +120,21 @@ def verify(did: str, payload: bytes, signature_hex: str) -> bool:
         return False
 
 
-def sign_object(kp: KeyPair, obj: dict[str, Any]) -> dict[str, Any]:
+def sign_object(kp: "Signer", obj: dict[str, Any]) -> dict[str, Any]:
+    """Sign the canonical bytes of `obj`, minus any proof already on it.
+
+    `kp` is anything that can name a DID and sign bytes — a local `KeyPair` or
+    a signer whose key lives in a key manager. The signature covers exactly
+    the bytes a verifier will reconstruct, so where the key lives changes
+    nothing about how the result verifies.
+    """
     body = {k: v for k, v in obj.items() if k != "proof"}
     payload = canonical_json(body)
+    did = kp.did()
     proof = {
         "type": "Ed25519Signature2026",
         "created": iso(utcnow()),
-        "verificationMethod": kp.did() + "#" + kp.did().split(":")[-1],
+        "verificationMethod": did + "#" + did.split(":")[-1],
         "proofPurpose": "assertionMethod",
         "proofValue": kp.sign_hex(payload),
         "payloadHash": sha256_hex(payload),

@@ -1,4 +1,4 @@
-# Threat model (v0.5.0)
+# Threat model (v0.6.0)
 
 TRUSTED: gateway, KeyProvider, route registry, SQLite tx layer, executor code, server-side Route.network_policy, the api_keys table.
 UNTRUSTED: agent, agent JSON, network, unsigned human input, upstream bodies, DNS answers.
@@ -82,10 +82,10 @@ supported today.
 ## The MCP guard
 
 The guard is a local process that speaks MCP to the model on one side and to an
-upstream MCP server on the other. It holds the agent key and signs intents with
-it, because a model cannot sign. The enforcement boundary is therefore the
-guard process: anything able to run code inside it can make it sign, and the
-grant's limits are what stand between it and the upstream.
+upstream MCP server on the other. It signs intents on the agent's behalf,
+because a model cannot sign. The enforcement boundary is therefore the guard
+process: anything able to run code inside it can make it sign, and the grant's
+limits are what stand between it and the upstream.
 
 Tool arguments are untrusted. They never become named fields of a signed
 intent — an MCP tool may take a `url` or a `host`, key names the validator
@@ -95,3 +95,34 @@ cannot reach a tool nobody classified.
 
 Unlike the HTTP gateway there is no API key and no tenant check on the way in.
 The caller is the local process that spawned the guard, not a remote client.
+
+## Signing keys
+
+A signer is what can produce a signature, which is not the same thing as what
+holds the key. `agent_signer` and `enforcer_signer` name a kind: `aws-kms`,
+`gcp-kms`, `vault-transit` and `command` keep the key outside this process,
+which signs by asking rather than by reading. `kind: file` is also accepted and
+loads a private key into the process — the default behaviour, named explicitly.
+Everything below describes the first group.
+
+This does not stop an attacker who already runs code in the process: they can
+ask for signatures too, for as long as they are there, and the grant's limits
+— not the key's location — are what bound what those signatures can do. What
+it removes is the durable secret. There is nothing to exfiltrate, and signing
+stops when access is revoked rather than continuing wherever the file was
+copied. Whether a signature also leaves an audit record the host cannot edit
+depends on the provider and how it is configured: AWS KMS, Cloud KMS and Vault
+log signing operations; a `command` signer logs whatever the command it fronts
+logs, which may be nothing.
+
+Every remote signature is verified against the signer's DID before it is
+returned, so a key manager holding a different key, or returning a DER-wrapped
+or truncated signature, fails at sign time instead of producing a receipt that
+will not verify later. A signer that cannot sign refuses the call outright:
+`SIGNER_UNAVAILABLE`, nothing dispatched. The key manager's error text reaches
+the operator's log, not the model, because a refusal is tool output and a
+signing error can name hosts and paths.
+
+The principal key is still local by default. Issuing and revoking grants is an
+operator action, so the private key that does it does not belong to a serving
+process at all — put it in a key manager too, or keep it off the host entirely.

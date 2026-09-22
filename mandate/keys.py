@@ -1,14 +1,20 @@
-"""Key providers live outside the object/grant store."""
+"""Key providers live outside the object/grant store.
+
+A provider hands the engine something that can sign, not necessarily a key it
+holds: `SignerKeyProvider` keeps the enforcer key in a key manager, so the
+process that signs receipts cannot export the key it signs them with.
+"""
 
 from __future__ import annotations
 
 from pathlib import Path
 
 from .crypto import KeyPair
+from .signing import Signer
 
 
 class KeyProvider:
-    def get_enforcer(self) -> KeyPair:
+    def get_enforcer(self) -> Signer:
         raise NotImplementedError
 
 
@@ -50,3 +56,19 @@ class PersistedDevKeyProvider(KeyProvider):
 
     def get_enforcer(self) -> KeyPair:
         return self._kp
+
+
+class SignerKeyProvider(KeyProvider):
+    """The enforcer signs through a key manager it cannot read the key from.
+
+    `Engine` only ever asks the enforcer key to sign, so anything satisfying
+    `Signer` works here — AWS KMS, Cloud KMS, Vault transit, or a command
+    fronting an HSM. Receipts stay verifiable by the same `did:key` as before,
+    because the DID is the public key either way.
+    """
+
+    def __init__(self, signer: Signer) -> None:
+        self._signer = signer
+
+    def get_enforcer(self) -> Signer:
+        return self._signer

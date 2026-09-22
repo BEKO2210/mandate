@@ -17,7 +17,7 @@ from mandate.mcp.config import parse_config
 from mandate.mcp.executor import McpExecutor, normalize_result
 from mandate.mcp.guard import McpGuard
 from mandate.mcp.mapping import MappingError, ToolMapping, ToolRule, normalize_action
-from mandate.mcp.server import BASE_URL, bootstrap, build_engine, load_agent_key
+from mandate.mcp.server import BASE_URL, bootstrap, build_engine, load_agent_signer
 from mandate.routes import Route
 
 CONFIG = {
@@ -84,7 +84,7 @@ def _world(tmp_path, upstream, config=None):
     state = bootstrap(config, engine)
     guard = McpGuard(
         engine=engine,
-        agent_kp=load_agent_key(config),
+        agent_signer=load_agent_signer(config),
         grant_id=state["grant_id"],
         mapping=config.mapping,
         tenant=config.tenant,
@@ -330,7 +330,7 @@ def test_g118_setup_is_idempotent_and_keys_stay_private(tmp_path):
     key = config.store_path / "keys" / "agent.key"
     assert key.exists()
     assert oct(key.stat().st_mode)[-3:] == "600"
-    assert load_agent_key(config).did() == state["agent_did"]
+    assert load_agent_signer(config).did() == state["agent_did"]
 
 
 # --- SDK wiring ------------------------------------------------------------

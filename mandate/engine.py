@@ -19,6 +19,7 @@ from .money import MoneyError
 from .payload import PayloadError, body_hash, build_payload, encode
 from .policy import constraint_minor, evaluate, intent_amount_minor
 from .routes import RouteRegistry
+from .signing import Signer, SigningError
 from .states import InvalidTransition
 from .validate import (
     ValidationError,
@@ -40,6 +41,20 @@ DEFAULT_EXECUTION_STALE_AFTER_S = 900
 
 class MandateError(Exception):
     pass
+
+
+class ExecutionUnknown(MandateError):
+    """The call was dispatched and its outcome could not be recorded.
+
+    Distinct from every other failure in `execute()` because the upstream may
+    already have acted. The receipt stays EXECUTING with its reservation held,
+    so `reconcile_stale_executions()` closes it out; the caller must be told
+    "unknown", never "not dispatched".
+    """
+
+    def __init__(self, message: str, receipt_id: str | None = None) -> None:
+        super().__init__(message)
+        self.receipt_id = receipt_id
 
 
 def _day() -> str:
@@ -94,7 +109,7 @@ class Engine:
     def __init__(
         self,
         store=None,
-        enforcer: KeyPair | None = None,
+        enforcer: Signer | None = None,
         key_provider: KeyProvider | None = None,
         ledger: Ledger | None = None,
         routes: RouteRegistry | None = None,
@@ -137,9 +152,12 @@ class Engine:
 
     def register_principal(
         self, name: str, kind: str = "person", jurisdiction: str = "DE",
-        tenant: str = DEFAULT_TENANT,
+        tenant: str = DEFAULT_TENANT, signer: Signer | None = None,
     ):
-        kp = KeyPair.generate()
+        # With a signer the engine never sees a private key: the DID comes from
+        # the key manager, and the caller gets the same signer back in place of
+        # the keypair it would otherwise have had to store.
+        kp = signer if signer is not None else KeyPair.generate()
         p = Principal(did=kp.did(), kind=kind, name=name, jurisdiction=jurisdiction)
         with self.ledger.tx() as tx:
             tx.put_principal(p.did, p.to_dict(), tenant=tenant)
@@ -151,9 +169,10 @@ class Engine:
         return p, kp
 
     def register_agent(
-        self, name, operator_did, developer, model, skills=None, tenant: str = DEFAULT_TENANT
+        self, name, operator_did, developer, model, skills=None, tenant: str = DEFAULT_TENANT,
+        signer: Signer | None = None,
     ):
-        kp = KeyPair.generate()
+        kp = signer if signer is not None else KeyPair.generate()
         card = AgentCard(
             did=kp.did(),
             name=name,
@@ -366,7 +385,7 @@ class Engine:
         return body
 
     def approve(
-        self, receipt_id: str, principal_kp: KeyPair, approval: dict | None = None,
+        self, receipt_id: str, principal_kp: Signer, approval: dict | None = None,
         tenant: str = DEFAULT_TENANT,
     ) -> dict[str, Any]:
         """Revalidate then HUMAN_REQUIRED -> AUTHORIZED. Never jumps to EXECUTED."""
@@ -656,6 +675,11 @@ class Engine:
                 tx.audit("execution.started", {"execution_id": execution_id, "receipt_id": receipt_id}, receipt_id)
         except StorageError as exc:
             raise MandateError("storage error") from exc
+        except SigningError as exc:
+            # Nothing has been dispatched: the claim is signed first precisely
+            # so an unsignable execution never leaves the gateway. The detail
+            # stays out of the message, which reaches a model as tool output.
+            raise MandateError("the execution claim could not be signed") from exc
 
         try:
             result = executor.forward(route, method, path, request_body, idem)
@@ -688,7 +712,16 @@ class Engine:
                 signed = sign_object(self.enforcer, new_body)
                 dst = result.state
                 if not tx.cas_state(receipt_id, "EXECUTING", dst, signed):
-                    raise MandateError("invalid state transition")
+                    # Post-dispatch, losing this CAS means something else moved
+                    # the receipt out of EXECUTING while the upstream call was
+                    # in flight — normally the reconciler, which has already
+                    # written EXECUTION_UNKNOWN. The call went out either way,
+                    # so this is an unknown outcome, never a failed dispatch.
+                    raise ExecutionUnknown(
+                        "the call was dispatched but its outcome could not be recorded: "
+                        "the receipt is no longer EXECUTING",
+                        receipt_id,
+                    )
                 binding = tx.get_budget_binding(receipt_id)
                 if binding:
                     gid, curr, day, bamt = (
@@ -711,8 +744,15 @@ class Engine:
                     execution_id, receipt_id, stored_idem, result.state, new_body["execution"]
                 )
                 return signed
-        except StorageError as exc:
-            raise MandateError("storage error") from exc
+        except (StorageError, SigningError) as exc:
+            # The request has already gone out. Failing to sign or store the
+            # outcome says nothing about whether the upstream acted, so this
+            # cannot be reported as a failed dispatch. The receipt stays
+            # EXECUTING with its reservation held for the reconciler.
+            raise ExecutionUnknown(
+                "the call was dispatched but its outcome could not be recorded",
+                receipt_id,
+            ) from exc
 
     def _is_stale(self, started_at: str | None) -> bool:
         cutoff = self._now() - timedelta(seconds=self.execution_stale_after_s)

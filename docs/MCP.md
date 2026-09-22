@@ -55,8 +55,15 @@ mandate mcp init  --config guard.json   # principal, agent and grant, once
 mandate mcp serve --config guard.json   # stdio, for the agent runtime to spawn
 ```
 
-`init` writes development keys under `<store>/keys`. A deployment that matters
-issues the grant elsewhere and gives the guard only the agent key.
+`init` writes development keys under `<store>/keys`. An `agent_signer` block
+means the key already exists somewhere, so none is generated or written here.
+Where "somewhere" is depends on the kind: `aws-kms`, `gcp-kms`, `vault-transit`
+and `command` keep it out of this process entirely, while `file` points at a
+key this process reads — convenient, but the key is still in memory. See
+[KMS.md](KMS.md).
+
+A deployment that matters issues the grant elsewhere and gives the guard only
+access to the agent key.
 
 ## What the model sees
 
@@ -122,10 +129,15 @@ reconciles it.
 
 ## Trust boundary
 
-The guard holds the agent key and signs intents with it. The model cannot
-sign, so the enforcement boundary is the guard process, not the model: anything
-that can run code in that process can make the guard sign. Run it as the agent
-runtime's child process, with the store and keys readable only by that user.
+The guard signs intents on the agent's behalf. The model cannot sign, so the
+enforcement boundary is the guard process, not the model: anything that can run
+code in that process can make the guard sign — with a local key by reading it,
+with a key manager by asking. Run it as the agent runtime's child process, with
+the store readable only by that user.
+
+Moving the key out of the process (`agent_signer`) removes the exfiltratable
+secret and makes revocation effective. It does not shrink the boundary; the
+grant's limits do that.
 
 The guard runs the engine in-process, so there is no API key and no tenant
 check on the way in — those exist on the HTTP gateway, where the caller is

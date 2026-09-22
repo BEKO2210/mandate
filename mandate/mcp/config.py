@@ -13,6 +13,7 @@ from typing import Any
 
 from ..auth import DEFAULT_TENANT
 from ..models import Constraint
+from ..signing import Signer, signer_from_config
 from .mapping import MappingError, ToolMapping, ToolRule
 
 DEFAULT_STORE = ".mandate-mcp"
@@ -57,6 +58,22 @@ class GuardConfig:
     store: str = DEFAULT_STORE
     timeout: float = DEFAULT_TIMEOUT
     server_name: str = "mandate_guard"
+    # Where the two keys live. Absent means the development default: a file in
+    # the store, readable by this process. A block here means a key manager,
+    # and then the guard signs without ever holding the key.
+    agent_signer: dict[str, Any] | None = None
+    enforcer_signer: dict[str, Any] | None = None
+
+    def build_agent_signer(self) -> Signer | None:
+        return signer_from_config(self.agent_signer) if self.agent_signer else None
+
+    def build_enforcer_signer(self) -> Signer | None:
+        return signer_from_config(self.enforcer_signer) if self.enforcer_signer else None
+
+    @property
+    def holds_agent_key(self) -> bool:
+        """True when the agent's private key is a file this process reads."""
+        return not self.agent_signer or self.agent_signer.get("kind") == "file"
 
     @property
     def store_path(self) -> Path:
@@ -120,6 +137,13 @@ def parse_config(raw: dict[str, Any]) -> GuardConfig:
         constraints=dict(grant_raw.get("constraints") or {}),
     )
 
+    for name in ("agent_signer", "enforcer_signer"):
+        block = raw.get(name)
+        if block is not None and not isinstance(block, dict):
+            raise MappingError(f"{name} must be an object naming a signer kind")
+        if isinstance(block, dict) and not block.get("kind"):
+            raise MappingError(f"{name} needs a kind (file, aws-kms, gcp-kms, …)")
+
     return GuardConfig(
         audience=mapping.audience,
         upstream=upstream,
@@ -129,6 +153,8 @@ def parse_config(raw: dict[str, Any]) -> GuardConfig:
         store=raw.get("store", DEFAULT_STORE),
         timeout=float(raw.get("timeout", DEFAULT_TIMEOUT)),
         server_name=raw.get("server_name", "mandate_guard"),
+        agent_signer=raw.get("agent_signer"),
+        enforcer_signer=raw.get("enforcer_signer"),
     )
 
 
