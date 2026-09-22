@@ -1,4 +1,4 @@
-# Threat model (v0.6.0)
+# Threat model (v0.7.0)
 
 TRUSTED: gateway, KeyProvider, route registry, SQLite tx layer, executor code, server-side Route.network_policy, the api_keys table.
 UNTRUSTED: agent, agent JSON, network, unsigned human input, upstream bodies, DNS answers.
@@ -126,3 +126,33 @@ signing error can name hosts and paths.
 The principal key is still local by default. Issuing and revoking grants is an
 operator action, so the private key that does it does not belong to a serving
 process at all — put it in a key manager too, or keep it off the host entirely.
+
+## The operator
+
+Every other section assumes the gateway behaves. This one assumes it does not:
+the threat is whoever can open the ledger and write SQL.
+
+Signed receipts never addressed this. A signature proves a receipt's contents
+and author; it says nothing about whether the receipt is still there, or
+whether others were removed around it. Deleting a row, rolling a state back or
+inserting one left every remaining signature valid.
+
+Every receipt state now appends an entry to a per-tenant hash chain, signed by
+the enforcer, and verification does two things: walks the chain, and reconciles
+it against the receipts it commits to. The second half is what catches a
+deleted or altered row; a chain that only verifies itself catches nothing, as
+the first implementation here demonstrated.
+
+Three limits, none of them fixable from inside the database:
+
+* **Truncation.** A prefix of a valid chain is a valid chain. Detecting a
+  deletion from the end needs a head kept somewhere the operator does not
+  control; `/v1/info` and `mandate chain head` hand one out, and
+  `--expect-head` checks against it. Without that, the chain proves that what
+  remains was not edited, not that nothing is missing.
+* **The signing key.** Anyone holding the enforcer key can re-sign the receipts
+  and the chain together. The chain raises editing history from an UPDATE to a
+  key compromise; it does not survive one.
+* **Per-tenant chains.** A whole tenant's history can be dropped without any
+  other tenant's chain noticing — the same isolation boundary the rest of the
+  system already draws.

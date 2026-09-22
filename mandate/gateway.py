@@ -99,11 +99,19 @@ def create_app(
 
     @app.get("/v1/info")
     def info(ctx: AuthContext = Depends(receipts_context)):
+        # The head travels to the caller on purpose. A chain cannot prove what
+        # was deleted from its own end; a head held by someone who is not the
+        # operator can.
+        head = engine.chain_head(ctx.tenant)
         return {
             "ok": True,
             "enforcer_did": engine.enforcer_did,
             "version": VERSION,
             "tenant": ctx.tenant,
+            "chain": {
+                "head": head["entry_hash"] if head else None,
+                "length": head["seq"] if head else 0,
+            },
         }
 
     @app.post("/v1/intents")

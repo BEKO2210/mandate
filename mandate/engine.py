@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from . import chain as chainlib
 from . import disclosure as disc
 from .crypto import KeyPair, iso, sign_object, utcnow, verify_object
 from .auth import DEFAULT_TENANT
@@ -146,6 +147,55 @@ class Engine:
 
     def _now(self):
         return self.clock()
+
+    def _chain(self, tx, tenant: str, receipt_id: str, outcome: str, body: dict) -> dict:
+        """Build and sign the entry that records one receipt state.
+
+        Called inside the caller's transaction so the head it reads is the head
+        the entry is appended to. Every receipt write in this engine goes
+        through here; the ledger refuses a write that does not.
+        """
+        head = tx.chain_head(tenant)
+        entry = chainlib.entry_body(
+            seq=(head["seq"] + 1) if head else 1,
+            tenant=tenant,
+            prev=head["entry_hash"] if head else chainlib.genesis(tenant),
+            receipt_id=receipt_id,
+            outcome=outcome,
+            body_hash=chainlib.body_hash(body),
+            recorded_at=iso(self._now()),
+        )
+        return chainlib.sign_entry(self.enforcer, entry)
+
+    def chain_head(self, tenant: str = DEFAULT_TENANT) -> dict | None:
+        """The current head, to keep somewhere this deployment does not own.
+
+        A chain proves nothing about what was deleted from its end. Handing the
+        head to anyone else — a log, another host, the caller who holds the
+        receipt — is what turns truncation from invisible into provable.
+        """
+        with self.ledger.tx() as tx:
+            return tx.chain_head(tenant)
+
+    def verify_chain(
+        self, tenant: str = DEFAULT_TENANT, expect_head: str | None = None,
+        expect_signer: str | None = None,
+    ) -> chainlib.ChainReport:
+        """Walk the chain and compare it against the receipts it commits to.
+
+        `expect_signer` is not defaulted to this engine's enforcer DID: an
+        engine built only to audit a database has a key of its own, and
+        assuming otherwise made every healthy chain report as broken.
+        """
+        with self.ledger.tx() as tx:
+            entries = tx.chain_entries(tenant)
+            stored = tx.receipt_digests(tenant)
+            unchained = tx.unchained_receipts(tenant)
+            legacy = tx.legacy_receipts(tenant)
+        return chainlib.verify_chain(
+            entries, tenant, signer_did=expect_signer, expect_head=expect_head,
+            stored=stored, unchained_receipts=unchained, legacy_receipts=legacy,
+        )
 
     def _day(self) -> str:
         return self._now().strftime("%Y-%m-%d")
@@ -362,11 +412,18 @@ class Engine:
                         "body": signed_receipt,
                         "budget_day": budget_day,
                         "tenant": tenant,
-                    }
+                    },
+                    chain=self._chain(tx, tenant, receipt_id, state, signed_receipt),
                 )
                 return signed_receipt
         except StorageError as exc:
             raise MandateError("storage error") from exc
+        except SigningError as exc:
+            # Pre-existing gap this release would have made likelier: an
+            # enforcer that cannot sign escaped `submit_intent` as a
+            # SigningError, past callers that only handle MandateError.
+            # Nothing has been dispatched here, so a refusal is the answer.
+            raise MandateError("the receipt could not be signed") from exc
         except InvalidTransition as exc:
             raise MandateError(str(exc)) from exc
         except MandateError:
@@ -492,7 +549,10 @@ class Engine:
                     new_body["outcome"] = "DENIED"
                     new_body["approval"] = signed_approval
                     signed = sign_object(self.enforcer, new_body)
-                    if not tx.cas_state(a["receipt_id"], "HUMAN_REQUIRED", "DENIED", signed):
+                    if not tx.cas_state(
+                        a["receipt_id"], "HUMAN_REQUIRED", "DENIED", signed,
+                        chain=self._chain(tx, tenant, a["receipt_id"], "DENIED", signed),
+                    ):
                         raise MandateError("invalid state transition")
                     tx.audit("approval.rejected", {"reason": decision.reasons}, a.get("approval_id"))
                     return signed
@@ -512,7 +572,10 @@ class Engine:
                     new_body["decision"] = {"allowed": False, "reasons": ["budget reservation failed"], "requires_human": False}
                     new_body["outcome"] = "DENIED"
                     signed = sign_object(self.enforcer, new_body)
-                    tx.cas_state(a["receipt_id"], "HUMAN_REQUIRED", "DENIED", signed)
+                    tx.cas_state(
+                        a["receipt_id"], "HUMAN_REQUIRED", "DENIED", signed,
+                        chain=self._chain(tx, tenant, a["receipt_id"], "DENIED", signed),
+                    )
                     return signed
 
                 new_body = {k: v for k, v in body.items() if k != "proof"}
@@ -527,7 +590,10 @@ class Engine:
                 if intent.amount is not None:
                     new_body["amount_minor"] = amt
                 signed = sign_object(self.enforcer, new_body)
-                if not tx.cas_state(a["receipt_id"], "HUMAN_REQUIRED", "AUTHORIZED", signed):
+                if not tx.cas_state(
+                    a["receipt_id"], "HUMAN_REQUIRED", "AUTHORIZED", signed,
+                    chain=self._chain(tx, tenant, a["receipt_id"], "AUTHORIZED", signed),
+                ):
                     raise MandateError("invalid state transition")
                 tx.put_budget_binding(a["receipt_id"], grant.id, intent.currency, budget_day, amt)
                 tx.set_receipt_budget_day(a["receipt_id"], budget_day)
@@ -602,7 +668,10 @@ class Engine:
                     denied = {k: v for k, v in body.items() if k != "proof"}
                     denied.update(outcome="DENIED", decision=decision.to_dict())
                     signed = sign_object(self.enforcer, denied)
-                    if not tx.cas_state(receipt_id, "AUTHORIZED", "DENIED", signed):
+                    if not tx.cas_state(
+                        receipt_id, "AUTHORIZED", "DENIED", signed,
+                        chain=self._chain(tx, tenant, receipt_id, "DENIED", signed),
+                    ):
                         raise MandateError("authorization already consumed")
                     tx.release_budget(grant.id, intent.currency, binding["day"], binding["amount_minor"])
                     tx.audit("execution.denied", {"receipt_id": receipt_id, "reasons": decision.reasons}, receipt_id)
@@ -665,7 +734,10 @@ class Engine:
                     "request": request_meta,
                 }
                 signed_claim = sign_object(self.enforcer, claim)
-                if not tx.cas_state(receipt_id, "AUTHORIZED", "EXECUTING", signed_claim):
+                if not tx.cas_state(
+                    receipt_id, "AUTHORIZED", "EXECUTING", signed_claim,
+                    chain=self._chain(tx, tenant, receipt_id, "EXECUTING", signed_claim),
+                ):
                     raise MandateError("authorization already consumed")
                 tx.set_execution(receipt_id, execution_id)
                 tx.put_execution(
@@ -711,7 +783,10 @@ class Engine:
                 }
                 signed = sign_object(self.enforcer, new_body)
                 dst = result.state
-                if not tx.cas_state(receipt_id, "EXECUTING", dst, signed):
+                if not tx.cas_state(
+                    receipt_id, "EXECUTING", dst, signed,
+                    chain=self._chain(tx, tenant, receipt_id, dst, signed),
+                ):
                     # Post-dispatch, losing this CAS means something else moved
                     # the receipt out of EXECUTING while the upstream call was
                     # in flight — normally the reconciler, which has already
@@ -772,7 +847,13 @@ class Engine:
         execution.update(state="EXECUTION_UNKNOWN", error=reason, reconciled_at=iso(self._now()))
         new_body["execution"] = execution
         signed = sign_object(self.enforcer, new_body)
-        if not tx.cas_state(receipt_id, "EXECUTING", "EXECUTION_UNKNOWN", signed):
+        # Reconciliation sweeps every tenant, so the tenant comes off the row
+        # rather than from a caller who may be closing out someone else's work.
+        tenant = row["tenant"] if "tenant" in row.keys() else DEFAULT_TENANT
+        if not tx.cas_state(
+            receipt_id, "EXECUTING", "EXECUTION_UNKNOWN", signed,
+            chain=self._chain(tx, tenant, receipt_id, "EXECUTION_UNKNOWN", signed),
+        ):
             raise MandateError("invalid state transition")
         prior = tx.get_execution_by_receipt(receipt_id)
         if prior:

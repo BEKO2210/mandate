@@ -1,10 +1,34 @@
-# Mandate v0.6.0
+# Mandate v0.7.0
 
 Enforcement gateway for AI-agent grants.
 
 An agent cannot call a protected upstream unless the gateway has a currently valid principal authorization — and cannot reach the gateway at all without a key.
 
-## What v0.6.0 adds
+## What v0.7.0 adds
+
+**History that cannot be edited without showing it.** Every receipt state
+appends an enforcer-signed entry to a per-tenant hash chain, and verification
+walks the chain *and* reconciles it against the receipts it commits to.
+
+```bash
+$ mandate chain verify --db .mandate/mandate.sqlite
+tenant default: TAMPERED — receipt rcpt_1c58a954… is in the chain at seq 13
+                but no longer in the database
+$ echo $?
+1
+```
+
+Deleting a row, rolling a state back, editing a body or inserting a receipt are
+all caught. Verification needs **no key and no running gateway**, because the
+person who most needs to check a chain is the one who does not trust whoever
+runs it.
+
+What it cannot do: prove what was deleted from the *end* of a chain. A prefix
+of a valid chain is a valid chain. `mandate chain head` and `/v1/info` hand out
+a head to keep elsewhere, and `--expect-head` checks against it. See
+[docs/CHAIN.md](docs/CHAIN.md).
+
+## What v0.6.0 established
 
 **The signing key no longer has to be in the process.** A signer is anything
 that can name a DID and sign bytes — a local key, or AWS KMS, Cloud KMS, Vault
@@ -104,7 +128,7 @@ that defaults to `"default"`.
 
 MCP, A2A, EUDI, wallets, UI, subdelegation, organization credentials, marketplace, payments, perfect exactly-once HTTP.
 
-A tamper-evident receipt chain, route and key configuration outside code and CLI, and nonce pruning are not implemented.
+Route and key configuration outside code and CLI, and nonce pruning are not implemented.
 
 ## Known limitations
 
@@ -117,6 +141,8 @@ The rate limiter is in-process, so it bounds one gateway process. That matches a
 On timeout or an unknown executor error the state is `EXECUTION_UNKNOWN` and the reservation is kept. Reconciling it is a human decision.
 
 A key manager does not bound a live compromise: code inside the signing process can ask it for signatures for as long as it is there. The principal key that issues grants is local by default.
+
+The receipt chain makes edited history detectable, not impossible. Truncation from the end of a chain is invisible unless a head was kept elsewhere, and a compromised enforcer key can re-sign receipts and chain together.
 
 ## Money
 
@@ -135,3 +161,5 @@ Gateway: GET /health, GET /v1/info, POST /v1/intents, POST /v1/approvals, GET /v
 MCP guard: `mandate mcp serve --config guard.json`
 
 Signer check: `mandate signer check --config guard.json`
+
+Chain: `mandate chain verify --db .mandate/mandate.sqlite` · `mandate chain head --db …`

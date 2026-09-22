@@ -680,7 +680,12 @@ def test_g156_the_guard_will_not_serve_with_an_enforcer_that_cannot_sign():
 
 class _FailAfter:
     """A signer that works n times and then stops, to land a failure on one
-    specific signature inside `Engine.execute()`."""
+    specific signature inside `Engine.execute()`.
+
+    Only signatures over Mandate *objects* are counted. Chain entries sign a
+    `sha256:…` string, and counting those too would tie these gates to how many
+    entries the chain happens to append — which is not what they are about.
+    """
 
     name = "fail-after"
 
@@ -690,10 +695,16 @@ class _FailAfter:
         self._message = message
         self.calls = 0
 
+    @staticmethod
+    def _is_object(payload: bytes) -> bool:
+        return payload[:1] == b"{"
+
     def did(self) -> str:
         return self._inner.did()
 
     def sign(self, payload: bytes) -> bytes:
+        if not self._is_object(payload):
+            return self._inner.sign(payload)
         self.calls += 1
         if self.calls >= self._after:
             raise SigningError(self._message)

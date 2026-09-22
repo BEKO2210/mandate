@@ -3,6 +3,52 @@
 All notable changes to this project are documented here.
 This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0] — 2026-09-22
+
+### Added
+
+- **A tamper-evident receipt chain.** Every state a receipt reaches appends an
+  enforcer-signed entry to a per-tenant hash chain, committing to the entry
+  before it. Editing or removing an entry breaks every entry after it.
+  Gates G158-G164.
+- **Verification reconciles the chain against the receipts it commits to** —
+  existence, state and a canonical hash of the stored body. This is the half
+  that catches a deleted or altered row; the first implementation had only the
+  self-check and caught nothing, which was found by deleting a row rather than
+  by reading the code. Gates G165-G168.
+- `mandate chain verify` and `mandate chain head`. Verification reads the
+  database directly and needs **no key and no running gateway**: the person who
+  most needs to check a chain is the one who does not trust whoever runs it.
+  An early version required the enforcer key and reported every healthy chain
+  as broken when run by anyone else. Gate G174.
+- `/v1/info` returns the chain head for the caller's tenant, so the people the
+  receipts are about can keep one. A head held outside the deployment is the
+  only thing that makes truncation detectable. Gate G169.
+- `Engine.verify_chain()`, `Engine.chain_head()` and a dependency-free
+  `mandate.chain` module.
+
+### Changed
+
+- **A receipt cannot be written without a chain entry.** `insert_receipt`
+  requires one and `cas_state` refuses without one, so the gap this closes
+  cannot be reopened by forgetting an argument. Gates G170, G171.
+- Ledger schema version 4. The chain starts empty and records how many receipts
+  each tenant already had; seeding it from existing receipts would produce a
+  chain that looks like it covered them all along. Those receipts are reported
+  as a note, and a count above it as a finding. Gate G173.
+- `submit_intent` converts a `SigningError` into a refusal instead of letting
+  it escape past callers that handle `MandateError`. Pre-existing, and made
+  likelier by the second signature this release adds. Gate G175.
+
+### Still open
+
+A chain cannot prove what was removed from its own end: truncation is only
+detectable against a head kept outside the deployment, and where that head goes
+is a deployment decision. A compromised enforcer key allows receipts and chain
+to be re-signed together. Chains are per tenant, so a whole tenant's history
+can be dropped without another tenant's chain noticing. Route and key
+configuration outside code, and nonce pruning, remain unimplemented.
+
 ## [0.6.0] — 2026-09-22
 
 ### Added

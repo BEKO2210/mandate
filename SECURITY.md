@@ -26,6 +26,8 @@ In scope:
 - Budget, nonce, approval or execution-claim defects: double spend, replay,
   double dispatch, a receipt that misstates what happened
 - Forging, tampering with or misattributing a signed object
+- Editing, deleting or inserting receipt history without the chain reporting
+  it — except from the end of a chain, where a kept head is the only defence
 - A configured signer emitting a signature that does not verify against the DID
   it is bound to, or a signer failure resulting in anything being dispatched
 - Reaching an unregistered destination, or a private or metadata address under
@@ -36,8 +38,10 @@ and `docs/SECURITY_BACKLOG.md`:
 
 - HTTPS DNS TOCTOU: the TLS peer IP is not pinned
 - The rate limiter is in-process, so it bounds one gateway process
-- Receipts are individually signed but not chained; an operator with database
-  access can delete or roll back history
+- Receipts are chained, but a chain cannot prove what was deleted from its own
+  end: detecting truncation requires a head kept outside the deployment
+- The chain is signed by the enforcer key, so a compromise of that key allows
+  history and chain to be re-signed together
 - `EXECUTION_UNKNOWN` holds its reservation until a human reconciles it
 - The receipt binds the body the gateway committed to sending, not proof of
   upstream receipt
