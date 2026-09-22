@@ -89,8 +89,8 @@ def loads_strict(raw: str) -> Any:
     unchanged while the stored bytes read differently to any parser that keeps
     the first.
 
-    **Unpaired surrogates.** `"\ud800"` is a legal JSON escape and an illegal
-    Unicode string. It parses, and then `canonical_json` raises
+    **Unpaired surrogates.** ``"\\ud800"`` is a legal JSON escape and an
+    illegal Unicode string. It parses, and then `canonical_json` raises
     `UnicodeEncodeError` on the way out — which crashed the verifier mid-run
     and took the whole report with it, including findings about *other*
     receipts. Refusing it here turns a blinded verifier into a named finding.
