@@ -152,13 +152,22 @@ Three limits, none of them fixable from inside the database:
   remains was not edited, not that nothing is missing.
 * **The signing key.** Anyone holding the enforcer key can re-sign the receipts
   and the chain together. The chain raises editing history from an UPDATE to a
-  key compromise; it does not survive one.
+  key compromise; it does not survive one. `mandate chain rotate` bounds how
+  long a compromise reaches: the rotation entry is signed by the key being
+  replaced, so a thief cannot reach back past the rotation that preceded
+  them, and cannot appoint themselves. The window becomes the interval
+  between rotations rather than the life of the deployment.
 * **The baseline's first write.** The number of receipts predating the chain
   bounds how many unchained ones are tolerated, and is bound into genesis so it
   cannot be raised afterwards. Before a tenant's first chained write there is
   no entry to break, so that one moment is trusted on first use. Raising it
   buys only permission for a row to exist unchained; the row's own proof is
   still verified, so a fabricated one is still a finding.
+* **What the chain records.** The states a receipt passed through are now
+  checked against the state machine, not only its final state, so a history
+  that skips authorization or runs backwards is a finding even when it is
+  signed. What remains outside the chain's reach is what a receipt never
+  recorded: it is evidence about receipts, not about the world.
 * **Per-tenant chains.** A whole tenant's history can be dropped without any
   other tenant's chain noticing — the same isolation boundary the rest of the
   system already draws.

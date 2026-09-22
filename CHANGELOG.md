@@ -3,6 +3,53 @@
 All notable changes to this project are documented here.
 This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.0] — 2026-09-22
+
+Closes what the last three releases listed as residual risk. Two of the three
+could not be *solved* — a prefix of a valid chain is a valid chain, and a
+stolen key signs whatever it likes — so they are answered with a mechanism
+that bounds them instead of a paragraph that admits them.
+
+### Added
+
+- **Anchors.** `mandate chain anchor --file <path>` appends the current head,
+  per tenant, to a file kept outside the database; `mandate chain verify
+  --anchors <path>` checks every recorded head still stands. Truncation is
+  invisible from inside a database by construction — this is the first thing
+  in the project that does something about it rather than advising the reader
+  to. It also catches history rewritten *beneath* a head somebody already
+  wrote down. Gates G193, G194.
+- **Key rotation.** `mandate chain rotate --to <did>` appends a rotation entry
+  **signed by the key being replaced**. A chain was previously pinned to one
+  key for life: rotating broke verification, so the practical advice was never
+  to rotate, which leaves a single compromise unbounded in time. Whoever
+  steals the current key still cannot rewrite anything that preceded the
+  rotation, and cannot declare themselves the signer. Gates G195, G196, G197.
+- `Engine.anchor_chain()` and `Engine.rotate_signer()`.
+
+### Changed
+
+- **Verification checks that a receipt's states form a legal road**, not only
+  that its destination matches. Reconciliation compares against the chain's
+  last entry for a receipt and says nothing about how it got there, so a
+  history that skips authorization or walks backwards used to pass. This was
+  a stated assumption in `SECURITY_BACKLOG.md`; it is now a check. Gates G190,
+  G191 — and G192, which asserts a legal road is *not* a finding, because a
+  check that condemns every history establishes nothing.
+- One place decides whether a report is `ok`. The verdict used to be set
+  inside whichever block happened to run, which is how a finding ends up in a
+  report that still says ok.
+
+### Still open
+
+A chain cannot prove what was removed from its own end *without an anchor*, so
+anchors have to actually be kept somewhere the operator cannot reach — the
+tool now writes them, where they go remains a deployment decision. A
+compromised enforcer key still signs whatever it likes from the moment it is
+taken until it is rotated away; rotation bounds the window, it does not close
+it. Route and key configuration outside code, and nonce pruning, remain
+unimplemented.
+
 ## [0.7.1] — 2026-09-22
 
 ### Fixed

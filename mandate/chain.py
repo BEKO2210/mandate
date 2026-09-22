@@ -40,7 +40,7 @@ import json
 from dataclasses import dataclass, field
 from typing import Any
 
-from .crypto import canonical_json, sha256_hex, verify
+from .crypto import canonical_json, did_to_public_bytes, sha256_hex, verify
 
 #: Bound into the first entry so a chain cannot be spliced onto another
 #: tenant's history: a stolen entry carries the tenant it was written for.
@@ -49,6 +49,19 @@ GENESIS_PREFIX = b"mandate/chain/v1:"
 #: The keys an entry commits to. Anything outside this set is not covered by
 #: the hash, so nothing outside it may be trusted.
 ENTRY_FIELDS = ("seq", "tenant", "prev", "receipt_id", "outcome", "body_hash", "recorded_at")
+
+#: A chain entry that records a change of signing key rather than a receipt.
+#: It reuses `receipt_id` and `outcome` instead of adding fields, so the hash
+#: covers it exactly as it covers everything else — a rotation an attacker
+#: could add outside the hash would be no rotation at all.
+ROTATION_ID = "chain:signer-rotation"
+
+#: The states a receipt can be *created* in. Evaluation happens before the
+#: first write, so a receipt may enter the chain already denied or already
+#: authorized — but never already executed. A first entry outside this set
+#: describes a history that cannot have happened, which is the shape of a
+#: forgery that skips authorization and lands on the result.
+INITIAL_OUTCOMES = frozenset({"PROPOSED", "DENIED", "HUMAN_REQUIRED", "AUTHORIZED"})
 
 
 class ChainError(Exception):
@@ -175,6 +188,32 @@ def sign_entry(signer, body: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def is_rotation(entry: dict[str, Any]) -> bool:
+    return entry.get("receipt_id") == ROTATION_ID
+
+
+def rotation_body(*, seq: int, tenant: str, prev: str, new_signer: str,
+                  recorded_at: str) -> dict[str, Any]:
+    """An entry that hands signing authority to another key.
+
+    Signed by the key being *replaced*, which is the whole point: a stolen
+    current key cannot rewrite the history that precedes the rotation without
+    also holding the key that signed it. Without this, a chain is pinned to
+    one key forever — rotating would break verification, so nobody would — and
+    a single compromise would be unbounded in both directions.
+    """
+    try:
+        did_to_public_bytes(new_signer)
+    except (ValueError, TypeError, AttributeError) as exc:
+        raise ChainError(f"{new_signer!r} is not an Ed25519 did:key: {exc}") from exc
+    return entry_body(
+        seq=seq, tenant=tenant, prev=prev, receipt_id=ROTATION_ID,
+        outcome=new_signer,
+        body_hash="sha256:" + sha256_hex(new_signer.encode("utf-8")),
+        recorded_at=recorded_at,
+    )
+
+
 def check_entry(entry: dict[str, Any], *, expect_seq: int, expect_prev: str,
                 expect_tenant: str, signer_did: str | None = None) -> str | None:
     """Return why this entry is not the one that belongs here, or None."""
@@ -215,6 +254,8 @@ def reconcile(
     # and must not quietly compare against the wrong entry if it is not.
     latest: dict[str, dict[str, Any]] = {}
     for entry in entries:
+        if is_rotation(entry):
+            continue  # a key change, not a claim about any receipt
         current = latest.get(entry["receipt_id"])
         if current is None or entry.get("seq", 0) >= current.get("seq", 0):
             latest[entry["receipt_id"]] = entry
@@ -244,6 +285,71 @@ def reconcile(
     return problems
 
 
+def check_transitions(entries: list[dict[str, Any]]) -> list[str]:
+    """Do the states the chain records for each receipt follow one another?
+
+    Reconciliation compares a receipt against the chain's *last* entry for it
+    and says nothing about the road taken to get there. Every ordinary write
+    goes through `assert_transition`, so this only bites when something has
+    written entries that the engine never would — a compromised signer, or a
+    bug in a future writer. That was a stated assumption until now; an
+    unstated assumption in evidence code is true right up until it is not.
+    """
+    from .states import can_transition
+
+    seen: dict[str, str] = {}
+    problems: list[str] = []
+    for entry in entries:
+        if is_rotation(entry):
+            continue
+        receipt_id, outcome = entry["receipt_id"], entry["outcome"]
+        previous = seen.get(receipt_id)
+        if previous is None:
+            if outcome not in INITIAL_OUTCOMES:
+                problems.append(
+                    f"receipt {receipt_id} enters the chain at seq {entry['seq']} "
+                    f"already {outcome}; no receipt is created in that state"
+                )
+        elif not can_transition(previous, outcome):
+            problems.append(
+                f"receipt {receipt_id} goes {previous} -> {outcome} at seq "
+                f"{entry['seq']}, which the state machine does not allow"
+            )
+        seen[receipt_id] = outcome
+    return problems
+
+
+def check_anchors(entries: list[dict[str, Any]], anchors: list[dict[str, Any]],
+                  tenant: str) -> list[str]:
+    """Compare the chain against heads that were written down elsewhere.
+
+    A prefix of a valid chain is a valid chain, so nothing inside a database
+    can prove that its end was not cut off. The only defence is a head held
+    where whoever runs the database cannot reach it — and until now this
+    codebase gave that as advice rather than as something it does.
+    """
+    by_seq = {entry.get("seq"): entry for entry in entries}
+    problems: list[str] = []
+    for anchor in anchors:
+        if anchor.get("tenant") != tenant:
+            continue
+        seq, expected = anchor.get("seq"), anchor.get("entry_hash")
+        entry = by_seq.get(seq)
+        if entry is None:
+            problems.append(
+                f"an anchor recorded seq {seq} for this tenant on "
+                f"{anchor.get('anchored_at', 'an unknown date')}, and the chain "
+                f"no longer reaches it"
+            )
+        elif entry.get("entry_hash") != expected:
+            problems.append(
+                f"seq {seq} is {entry.get('entry_hash')} but the anchor taken on "
+                f"{anchor.get('anchored_at', 'an unknown date')} recorded "
+                f"{expected}; history was rewritten under it"
+            )
+    return problems
+
+
 @dataclass
 class ChainReport:
     """What a walk of the chain found. `ok` is the only thing to branch on."""
@@ -258,6 +364,8 @@ class ChainReport:
     receipt_id: str | None = None
     reason: str | None = None
     unchained_receipts: int = 0
+    rotations: int = 0
+    anchors: int = 0
     mismatches: list[str] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
 
@@ -272,9 +380,14 @@ class ChainReport:
             more = f" (+{len(self.mismatches) - 1} more)" if len(self.mismatches) > 1 else ""
             return f"tenant {self.tenant}: TAMPERED — {first}{more}"
         signed_by = f", signed by {self.signer}" if self.signer else ""
+        extra = ""
+        if self.rotations:
+            extra += f", {self.rotations} key rotation(s)"
+        if self.anchors:
+            extra += f", {self.anchors} anchor(s) hold"
         return (
             f"tenant {self.tenant}: {self.length} entries intact, "
-            f"head {self.head or '-'}{signed_by}"
+            f"head {self.head or '-'}{signed_by}{extra}"
         )
 
 
@@ -283,6 +396,7 @@ def verify_chain(
     signer_did: str | None = None, expect_head: str | None = None,
     stored: dict[str, dict[str, Any]] | None = None,
     unchained_receipts: int = 0, legacy_receipts: int = 0,
+    anchors: list[dict[str, Any]] | None = None,
 ) -> ChainReport:
     """Walk a tenant's chain from genesis and report the first break.
 
@@ -299,6 +413,7 @@ def verify_chain(
     """
     prev = genesis(tenant, legacy_receipts)
     expect_signer = signer_did
+    rotations = 0
     for index, entry in enumerate(entries, start=1):
         if expect_signer is None:
             expect_signer = entry.get("signer")
@@ -314,12 +429,29 @@ def verify_chain(
                 unchained_receipts=unchained_receipts,
             )
         prev = entry["entry_hash"]
+        if is_rotation(entry):
+            # Verified a moment ago against the *outgoing* signer, which is
+            # what makes a rotation an act of the key being replaced rather
+            # than a claim by whoever holds the new one.
+            expect_signer = entry["outcome"]
+            rotations += 1
 
     head = prev if entries else None
     report = ChainReport(
         tenant=tenant, ok=True, length=len(entries), signer=expect_signer,
         legacy_receipts=legacy_receipts, head=head, unchained_receipts=unchained_receipts,
+        rotations=rotations,
     )
+
+    # The states a receipt passed through have to be a road the state machine
+    # allows, not merely a destination that matches.
+    report.mismatches.extend(check_transitions(entries))
+
+    # Heads written down outside this database. The only thing that can speak
+    # for what is missing from the end of a chain.
+    if anchors:
+        report.mismatches.extend(check_anchors(entries, anchors, tenant))
+        report.anchors = sum(1 for a in anchors if a.get("tenant") == tenant)
     if expect_head is not None and head != expect_head:
         # The chain is internally consistent and still wrong: this is what a
         # truncation looks like from the outside, and the only way to see it.
@@ -330,7 +462,7 @@ def verify_chain(
             f"entries after that point are missing"
         )
     if stored is not None:
-        report.mismatches = reconcile(entries, stored)
+        report.mismatches.extend(reconcile(entries, stored))
         # The chain says what the set of receipts is. It never asked whether a
         # row in that set was ever signed, so a fabricated receipt in a tenant
         # the chain does not cover sat unexamined. Verifying a proof needs no
@@ -343,8 +475,6 @@ def verify_chain(
                 f"receipt {receipt_id} does not carry a signature that verifies "
                 f"against the key its own proof names"
             )
-        if report.mismatches:
-            report.ok = False
 
     # Receipts the chain never recorded. Up to the number that already existed
     # when the chain started, that is history the chain cannot speak for;
@@ -354,6 +484,11 @@ def verify_chain(
         report.mismatches.append(
             f"{inserted} receipt(s) exist that the chain never recorded"
         )
+        report.ok = False
+    # One place decides. Each check above only reports; leaving the verdict to
+    # whichever block happened to run last is how a finding ends up in a report
+    # that still says ok.
+    if report.mismatches:
         report.ok = False
     if legacy_receipts:
         report.notes.append(

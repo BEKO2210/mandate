@@ -1,4 +1,4 @@
-"""v0.7.0 receipt-chain gates G158-G189.
+"""v0.7.0 receipt-chain gates G158-G197.
 
 Signatures proved who wrote each receipt. They proved nothing about the set of
 receipts: an operator with database access could delete a row, roll a state
@@ -838,3 +838,212 @@ def test_g189_the_file_verifier_says_invalid_instead_of_crashing(tmp_path, capsy
     captured = capsys.readouterr()
     assert captured.out == "VALID\n"
     assert captured.err == ""
+
+
+# --- Closing the three residuals --------------------------------------------
+
+
+def _forge_history(engine, outcomes, receipt_id="rcpt_forged"):
+    """Append entries with the chain's real key — the only interesting case.
+
+    A forgery signed with some other key is caught by the signature check and
+    proves nothing about what this gate is for. An earlier version of this
+    helper used a fresh engine, whose ephemeral key made the whole attack
+    bounce off the wrong wall.
+    """
+    with engine.ledger.tx() as tx:
+        for outcome in outcomes:
+            head = tx.chain_head("default")
+            body = chainlib.entry_body(
+                seq=head["seq"] + 1, tenant="default", prev=head["entry_hash"],
+                receipt_id=receipt_id, outcome=outcome,
+                body_hash="sha256:" + "0" * 64, recorded_at="2026-09-22T20:00:00Z",
+            )
+            tx.append_chain(chainlib.sign_entry(engine.enforcer, body))
+
+
+def test_g190_a_receipt_cannot_enter_the_chain_already_finished(tmp_path):
+    """Evaluation happens before the first write, so a receipt may be created
+    already denied or already authorized — never already executed."""
+    engine, db, ids, _ = _world(tmp_path, calls=2)
+    try:
+        _forge_history(engine, ["EXECUTED"])
+        report = engine.verify_chain()
+        assert not report.ok
+        assert any("already EXECUTED" in m for m in report.mismatches), report.mismatches
+    finally:
+        engine.ledger.close()
+
+
+def test_g191_the_states_a_receipt_passed_through_must_be_a_legal_road(tmp_path):
+    """Reconciliation compares against the *last* entry and says nothing about
+    how the receipt got there. Skipping authorization, or walking backwards,
+    both produce a destination that looks fine."""
+    for outcomes, forbidden in (
+        (["PROPOSED", "EXECUTED"], "PROPOSED -> EXECUTED"),
+        (["AUTHORIZED", "PROPOSED"], "AUTHORIZED -> PROPOSED"),
+        (["PROPOSED", "AUTHORIZED", "EXECUTING", "EXECUTED", "EXECUTING"],
+         "EXECUTED -> EXECUTING"),
+    ):
+        engine, db, ids, _ = _world(tmp_path / forbidden[:9].strip(), calls=2)
+        try:
+            _forge_history(engine, outcomes)
+            report = engine.verify_chain()
+            assert not report.ok
+            assert any(forbidden in m for m in report.mismatches), (outcomes, report.mismatches)
+        finally:
+            engine.ledger.close()
+
+
+def test_g192_a_legal_road_is_not_a_finding(tmp_path):
+    """The other half, and the one that matters: a check that condemns every
+    history is a check that establishes nothing. This branch has already
+    shipped one verifier that cried wolf."""
+    engine, db, ids, _ = _world(tmp_path, calls=2)
+    try:
+        _forge_history(engine, ["PROPOSED", "AUTHORIZED", "EXECUTING", "EXECUTED"])
+        report = engine.verify_chain()
+        walked = [m for m in report.mismatches if "state machine does not allow" in m]
+        assert not walked, walked
+        assert not any("already" in m for m in report.mismatches), report.mismatches
+    finally:
+        engine.ledger.close()
+
+
+def test_g193_an_anchor_makes_truncation_visible(tmp_path):
+    """A prefix of a valid chain is a valid chain, so nothing inside a database
+    can speak for what was cut off its end. Until this, the codebase said so
+    and left the reader to do something about it."""
+    engine, db, ids, _ = _world(tmp_path, calls=4)
+    try:
+        anchor = engine.anchor_chain()
+        assert anchor and anchor["seq"] > 0
+    finally:
+        engine.ledger.close()
+
+    # An operator cutting the tail off takes the receipts with it — leaving
+    # them behind is caught by the count, and would make this gate pass for
+    # the wrong reason.
+    con = sqlite3.connect(db)
+    con.row_factory = sqlite3.Row
+    doomed = [r["receipt_id"] for r in
+              con.execute("SELECT DISTINCT receipt_id FROM chain WHERE seq > ?",
+                          (anchor["seq"] - 3,))]
+    con.close()
+    _sql(db, "DELETE FROM chain WHERE seq > ?", anchor["seq"] - 3)
+    for receipt_id in doomed:
+        _sql(db, "DELETE FROM receipts WHERE id=?", receipt_id)
+
+    engine = Engine(ledger=Ledger(db))
+    try:
+        blind = engine.verify_chain()
+        assert blind.ok, (
+            "a truncated chain is internally consistent — that is the problem: "
+            f"{blind.mismatches}"
+        )
+
+        seen = engine.verify_chain(anchors=[anchor])
+        assert not seen.ok
+        assert any("anchor recorded seq" in m for m in seen.mismatches), seen.mismatches
+    finally:
+        engine.ledger.close()
+
+
+def test_g194_an_anchor_also_catches_a_rewrite_beneath_it(tmp_path):
+    """Truncation is the headline; the same record catches history edited
+    under a head somebody already wrote down."""
+    engine, db, ids, _ = _world(tmp_path, calls=3)
+    try:
+        anchor = engine.anchor_chain()
+
+        # Re-signed properly, so the walk has nothing to object to: the head is
+        # the one entry that can be rewritten without breaking any `prev`.
+        # Only the anchor knows it used to say something else.
+        with engine.ledger.tx() as tx:
+            rows = tx.chain_entries("default")
+        head = rows[-1]
+        body = {k: head[k] for k in chainlib.ENTRY_FIELDS}
+        body["outcome"] = "DENIED"
+        resigned = chainlib.sign_entry(engine.enforcer, body)
+        _sql(db, "UPDATE chain SET outcome=?, entry_hash=?, signature=? WHERE seq=?",
+             "DENIED", resigned["entry_hash"], resigned["signature"], head["seq"])
+
+        blind = engine.verify_chain()
+        assert not any("anchor" in m for m in blind.mismatches), blind.mismatches
+
+        report = engine.verify_chain(anchors=[anchor])
+        assert not report.ok
+        assert any("history was rewritten under it" in m for m in report.mismatches), report
+    finally:
+        engine.ledger.close()
+
+
+def test_g195_a_rotation_is_an_act_of_the_key_being_replaced(tmp_path):
+    """Whoever steals the current key must not be able to declare themselves
+    the signer — otherwise a rotation record is a gift to the thief."""
+    engine, db, ids, _ = _world(tmp_path, calls=2)
+    thief = KeyPair.generate()
+    try:
+        with engine.ledger.tx() as tx:
+            head = tx.chain_head("default")
+            body = chainlib.rotation_body(
+                seq=head["seq"] + 1, tenant="default", prev=head["entry_hash"],
+                new_signer=thief.did(), recorded_at="2026-09-22T20:00:00Z",
+            )
+            tx.append_chain(chainlib.sign_entry(thief, body))
+        report = engine.verify_chain()
+        assert not report.ok
+        assert "not by" in (report.reason or ""), report
+    finally:
+        engine.ledger.close()
+
+
+def test_g196_a_chain_survives_a_rotation_and_binds_what_came_before(tmp_path):
+    """Pinned to one key for life, nobody rotates, and a single compromise is
+    unbounded in time. After a rotation the new key signs what follows — and
+    still cannot touch what preceded it."""
+    engine, db, ids, _ = _world(tmp_path, calls=2)
+    new = KeyPair.generate()
+    try:
+        entry = engine.rotate_signer(new.did())
+        assert entry["outcome"] == new.did()
+        engine.enforcer = new
+        after = engine.verify_chain()
+        assert after.ok, after.summary()
+        assert after.rotations == 1
+
+        # The holder of the new key edits an entry from before the rotation
+        # and re-signs it with the only key they have.
+        with engine.ledger.tx() as tx:
+            rows = tx.chain_entries("default")
+        target = rows[1]
+        body = {k: target[k] for k in chainlib.ENTRY_FIELDS}
+        body["outcome"] = "DENIED"
+        resigned = chainlib.sign_entry(new, body)
+        _sql(db, "UPDATE chain SET outcome=?, entry_hash=?, signature=?, signer=? "
+                 "WHERE seq=?",
+             "DENIED", resigned["entry_hash"], resigned["signature"], new.did(),
+             target["seq"])
+        broken = engine.verify_chain()
+        assert not broken.ok
+        assert broken.broken_at == target["seq"], broken
+    finally:
+        engine.ledger.close()
+
+
+def test_g197_a_rotation_entry_is_not_a_claim_about_any_receipt(tmp_path):
+    """It reuses `receipt_id`, so reconciliation would otherwise go looking for
+    a receipt called `chain:signer-rotation` and report it missing."""
+    engine, db, ids, _ = _world(tmp_path, calls=2)
+    new = KeyPair.generate()
+    try:
+        engine.rotate_signer(new.did())
+        engine.enforcer = new
+        report = engine.verify_chain()
+        assert report.ok, report.summary()
+        assert not any(chainlib.ROTATION_ID in m for m in report.mismatches), report
+        with pytest.raises(chainlib.ChainError):
+            chainlib.rotation_body(seq=1, tenant="default", prev="x",
+                                   new_signer="not-a-did", recorded_at="now")
+    finally:
+        engine.ledger.close()

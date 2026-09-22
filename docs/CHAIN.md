@@ -54,6 +54,11 @@ by reading the code. Gates G165–G168 exist because of it.
 | Raise the legacy baseline in `meta` | genesis, which binds it |
 | Insert a receipt into a tenant that has no chain | the verifier enumerates tenants from the receipts as well as the chain |
 | Fabricate a receipt outright | its own proof, which no count can licence |
+| Write a receipt straight into the chain as EXECUTED | the state machine: no receipt is created in that state |
+| Walk a receipt backwards, or skip authorization | the state machine, entry by entry |
+| Cut entries off the end of the chain | an anchor kept elsewhere — nothing inside the database can |
+| Rewrite the head under an anchor somebody kept | that anchor |
+| Steal the key and declare yourself the signer | a rotation is signed by the key being replaced |
 | Poison a field with an unpaired surrogate | the strict parser — it used to crash the verifier mid-run and take the whole report with it |
 | Poison a field any other way — a proof that is a list, nesting past the parser's limit | the error boundary, which catches everything: one bad row is one finding, never the run |
 | Put a proof on a receipt that names something other than a `did:key` | `verify_object`, which fails closed: malformed is simply not verified |
@@ -97,7 +102,29 @@ inside a database can prove the absence of something removed from the end of
 it. Deleting the last N entries *and* the receipts they cover leaves a
 perfectly verifiable ledger that is simply shorter.
 
-The only defence is a head held where the operator cannot reach it:
+The only defence is a head held where the operator cannot reach it. Since
+v0.8.0 the tool writes those heads rather than telling you to:
+
+```bash
+$ mandate chain anchor --db .mandate/mandate.sqlite --file /mnt/witness/anchors.jsonl
+default: seq 12 sha256:f4c5847b…
+Appended 1 anchor(s). It is worth something only where this database's
+operator cannot edit it.
+
+# later, after the last three entries and their receipts quietly disappear
+$ mandate chain verify --db … --anchors /mnt/witness/anchors.jsonl
+tenant default: TAMPERED — an anchor recorded seq 12 for this tenant on
+2026-09-22T20:13:40Z, and the chain no longer reaches it
+$ echo $?
+1
+```
+
+Without it, the same database reports `9 entries intact` and exits 0. An
+anchor also catches the head being rewritten *beneath* it, which the walk
+cannot: the last entry is the one entry that can be re-signed without
+breaking any `prev`.
+
+The older mechanism still works and needs no file:
 
 ```bash
 $ mandate chain head --db .mandate/mandate.sqlite
@@ -121,6 +148,38 @@ this codebase cannot make for you.
 the whole chain together, consistently. The chain raises the cost of editing
 history from "run an UPDATE" to "hold the signing key"; it does not survive the
 key itself being taken. That is the argument for `docs/KMS.md`.
+
+What it does survive is that state ending. A chain used to be pinned to one
+key for life — rotating broke verification, so the advice was not to, which
+makes one compromise unbounded in time:
+
+```bash
+mandate chain rotate --db … --config guard.toml --to did:key:z6Mku1qK…
+```
+
+The rotation entry is signed by the key **being replaced**. So a thief holding
+the current key cannot declare themselves the signer, and cannot rewrite
+anything that happened before the rotation that handed them nothing. The
+window a compromise covers becomes the time between rotations instead of the
+life of the deployment.
+
+## The road, not just the destination
+
+Reconciliation compares a receipt against the chain's *last* entry for it. That
+says nothing about how it got there. Since v0.8.0 the states a receipt passed
+through must also be a road the state machine allows:
+
+```
+receipt rcpt_forged goes PROPOSED -> EXECUTED at seq 8, which the state
+machine does not allow
+receipt rcpt_forged enters the chain at seq 7 already EXECUTED; no receipt
+is created in that state
+```
+
+This only bites against something that writes entries the engine never would —
+a compromised signer, or a bug in a future writer — which is exactly why it was
+an unstated assumption for three releases. An unstated assumption in evidence
+code is true right up until it is not.
 
 **Anything a receipt never recorded.** The chain is evidence about receipts,
 not about the world.
