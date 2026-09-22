@@ -31,7 +31,17 @@ ordinary tampering in the same database that went unreported because of it.
   becomes a finding and the run continues — so breadth costs nothing and
   narrowness costs the whole report.
 
-Gates G186-G188. Full suite: 209 passed on Python 3.11 and 3.13.
+- **A malformed DID still escaped, after the first fix.** `verify` decodes the
+  DID before its own `try`, so a `verificationMethod` that is a string but not
+  a `did:key` — `"not-a-did"`, an empty string, a `did:web` — raised
+  `ValueError` out of `verify_object`. `mandate chain verify` survived it on
+  the row boundary; `mandate verify` on a file did not, and produced exactly
+  the traceback this release set out to remove. The whole operation now fails
+  closed behind one boundary rather than a check per field: checking fields
+  encodes a guess about what malformed input can do, and that guess was wrong
+  again. Gates G186, G189.
+
+Gates G186-G189. Full suite: 210 passed on Python 3.11 and 3.13.
 
 ## [0.7.0] — 2026-09-22
 

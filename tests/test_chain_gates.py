@@ -1,4 +1,4 @@
-"""v0.7.0 receipt-chain gates G158-G188.
+"""v0.7.0 receipt-chain gates G158-G189.
 
 Signatures proved who wrote each receipt. They proved nothing about the set of
 receipts: an operator with database access could delete a row, roll a state
@@ -704,9 +704,21 @@ def test_g186_a_proof_that_is_not_an_object_is_answered_not_raised(tmp_path):
     verifier is the normal case, not the exceptional one.
     """
     for hostile in ([], "nope", 7, {"verificationMethod": 7},
-                    {"verificationMethod": "did:key:z6Mk", "proofValue": []}):
+                    {"verificationMethod": "did:key:z6Mk", "proofValue": []},
+                    # A *string* that is not a DID reaches did_to_public_bytes,
+                    # which raises before `verify` has a try block of its own.
+                    # Review found this one after the first fix: checking each
+                    # field encodes a guess about what malformed input can do.
+                    {"verificationMethod": "not-a-did", "proofValue": ""},
+                    {"verificationMethod": "", "proofValue": ""},
+                    {"verificationMethod": "did:web:example.com", "proofValue": ""},
+                    {"verificationMethod": "did:key:zZZZZ", "proofValue": ""}):
         assert verify_object({"id": "x", "proof": hostile}) is False, hostile
     assert verify_object(["not", "a", "dict"]) is False
+    # A direct caller can make canonicalisation itself raise.
+    assert verify_object({"id": "x", 1: "non-string key",
+                          "proof": {"verificationMethod": "did:key:z6Mk",
+                                    "proofValue": ""}}) is False
 
     def mutate(raw):
         body = json.loads(raw)
@@ -758,3 +770,26 @@ def test_g188_a_body_the_interpreter_can_parse_is_still_reconciled(tmp_path):
     assert not report.ok
     assert any(report.mismatches), report
     assert any("DENIED" in m for m in report.mismatches), report.mismatches
+
+
+def test_g189_the_file_verifier_says_invalid_instead_of_crashing(tmp_path):
+    """`mandate verify` is the command an auditor runs on a file they were sent.
+
+    A traceback there is not a verdict. The file is hostile input by
+    definition — it is the thing being questioned — so every malformed shape
+    has to come back as INVALID with a non-zero exit, not as a stack trace
+    that says nothing about whether the receipt is genuine.
+    """
+    from mandate.cli import main
+
+    cases = [
+        {"id": "x", "proof": {"verificationMethod": "not-a-did", "proofValue": ""}},
+        {"id": "x", "proof": {"verificationMethod": "did:web:example.com",
+                              "proofValue": ""}},
+        {"id": "x", "proof": []},
+        {"id": "x"},
+    ]
+    for i, obj in enumerate(cases):
+        path = tmp_path / f"hostile-{i}.json"
+        path.write_text(json.dumps(obj), encoding="utf-8")
+        assert main(["verify", str(path)]) == 1, obj

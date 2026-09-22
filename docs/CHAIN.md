@@ -56,6 +56,7 @@ by reading the code. Gates G165–G168 exist because of it.
 | Fabricate a receipt outright | its own proof, which no count can licence |
 | Poison a field with an unpaired surrogate | the strict parser — it used to crash the verifier mid-run and take the whole report with it |
 | Poison a field any other way — a proof that is a list, nesting past the parser's limit | the error boundary, which catches everything: one bad row is one finding, never the run |
+| Put a proof on a receipt that names something other than a `did:key` | `verify_object`, which fails closed: malformed is simply not verified |
 
 ## Verify
 

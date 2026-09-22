@@ -153,6 +153,21 @@ def verify_object(obj: dict[str, Any], expected_did: str | None = None) -> bool:
     verifier that dies says nothing, which is worse than the tampering it was
     asked about. Malformed is simply not verified.
     """
+    try:
+        return _verify_object(obj, expected_did)
+    except Exception:  # noqa: BLE001 - the contract is to answer, not to raise
+        # One boundary around the whole operation rather than a check per
+        # field. Field checks encode a guess about what malformed input can
+        # do, and the guess keeps being wrong: a non-DID string reaches
+        # `did_to_public_bytes` and raises ValueError before `verify` has a
+        # try block of its own, and a caller passing a dict with non-string
+        # keys makes canonicalisation raise. Every one of those means the
+        # same thing — not verified — and none of them should reach a
+        # caller as a traceback.
+        return False
+
+
+def _verify_object(obj: dict[str, Any], expected_did: str | None) -> bool:
     if not isinstance(obj, dict) or not isinstance(obj.get("proof"), dict):
         return False
     proof = obj["proof"]
