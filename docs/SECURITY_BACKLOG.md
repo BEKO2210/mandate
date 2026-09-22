@@ -184,6 +184,22 @@ one path and the upstream was asked for another.
 
 Covered by G212–G219.
 
+## SH-12 — An unknown outcome must be resolvable without editing the ledger — DONE in v0.9.0
+
+`EXECUTION_UNKNOWN` was a dead end: its reservation stayed held forever, so
+every unknown outcome permanently shrank a grant's daily budget, and the only
+way for a person who knew what happened to say so was to edit the database.
+`resolve_unknown` (`mandate gateway resolve`, `mandate mcp resolve`) records
+the finding as a signed, chained transition to `EXECUTED` (commit) or
+`EXECUTION_FAILED` (release), naming who decided and why.
+
+Settlement for receipts from before budget bindings fell back to *today*.
+`execute()` refuses such receipts before dispatch, so there it was dead code;
+resolution is where they still arrive. The day is now the recorded one, or one
+the operator names — never a guess, and never overriding a recorded day.
+
+Covered by G220–G225.
+
 ## Residual / next
 
 - A chain cannot prove what was removed from its own end; truncation is only
@@ -207,4 +223,6 @@ Covered by G212–G219.
   because the digest variant would not verify as `did:key`
 - Without `principal_signer`, `mcp init` writes the grant-issuing key to the
   store as a development file; that is a default an operator has to change
-- Reconciling an EXECUTION_UNKNOWN reservation is still a manual decision
+- Resolving an EXECUTION_UNKNOWN receipt records an operator's finding; the
+  engine cannot check it against the upstream, and the receipt says so by
+  naming who decided

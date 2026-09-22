@@ -15,7 +15,7 @@ from .auth import DEFAULT_TENANT
 from .executor import ExecutionResult
 from .keys import EphemeralKeyProvider, KeyProvider, PersistedDevKeyProvider
 from .ledger import Ledger, StorageError
-from .models import AgentCard, Constraint, Grant, Intent, Principal, Receipt, new_id
+from .models import AgentCard, Grant, Intent, Principal, Receipt, new_id
 from .money import MoneyError
 from .payload import PayloadError, body_hash, build_payload, encode
 from .policy import constraint_minor, evaluate, intent_amount_minor
@@ -859,16 +859,16 @@ class Engine:
                         "the receipt is no longer EXECUTING",
                         receipt_id,
                     )
-                binding = tx.get_budget_binding(receipt_id)
-                if binding:
-                    gid, curr, day, bamt = (
-                        binding["grant_id"], binding["currency"], binding["day"], binding["amount_minor"],
-                    )
-                else:
-                    gid = row["grant_id"]
-                    curr = row["currency"] or "EUR"
-                    day = self._day()
-                    bamt = int(row["amount_minor"] or 0)
+                try:
+                    gid, curr, day, bamt = self._settlement(tx, row, body)
+                except MandateError as exc:
+                    # Unreachable while execute() refuses an unbound receipt
+                    # before dispatch; if it is ever reached, the call went out
+                    # and the receipt stays EXECUTING for the reconciler.
+                    raise ExecutionUnknown(
+                        "the call was dispatched but the reservation it settles is not recorded",
+                        receipt_id,
+                    ) from exc
                 if result.state == "EXECUTED":
                     tx.commit_budget(gid, curr, day, bamt)
                     tx.audit("execution.succeeded", {"execution_id": execution_id, "budget_day": day}, receipt_id)
@@ -890,6 +890,127 @@ class Engine:
                 "the call was dispatched but its outcome could not be recorded",
                 receipt_id,
             ) from exc
+
+    def _settlement(
+        self, tx, row, body: dict, budget_day: str | None = None,
+    ) -> tuple[str, str, str, int]:
+        """The reservation a receipt's outcome settles: grant, currency, day
+        and minor units.
+
+        The binding written when the reservation was made is authoritative.
+        Receipts from before bindings existed used to settle on *today* —
+        the one day the reservation was certainly not made on whenever the
+        settlement crosses midnight: a day that reserved nothing was debited
+        and the real reservation stayed held. Such a receipt now settles on
+        the day it records, or on the day an operator names; if neither
+        exists, nothing is settled and the caller is told why. A day that was
+        never written down cannot be recovered by guessing.
+        """
+        binding = tx.get_budget_binding(row["id"])
+        recorded = binding["day"] if binding else (row.get("budget_day") or body.get("budget_day"))
+        if budget_day is not None:
+            try:
+                datetime.strptime(budget_day, "%Y-%m-%d")
+            except ValueError as exc:
+                raise MandateError("budget day must be YYYY-MM-DD") from exc
+            if recorded and budget_day != recorded:
+                raise MandateError(f"this receipt reserved on {recorded}, not {budget_day}")
+        day = recorded or budget_day
+        if not day:
+            raise MandateError(
+                "this receipt predates budget bindings and records no reservation day; "
+                "name the day it reserved"
+            )
+        if binding:
+            return binding["grant_id"], binding["currency"], day, binding["amount_minor"]
+        return row["grant_id"], row["currency"] or "EUR", day, int(row["amount_minor"] or 0)
+
+    def unknown_receipts(self, tenant: str | None = None) -> list[dict[str, Any]]:
+        """Receipts whose outcome nobody knows, for an operator to look into.
+
+        Each one names what was sent and where, so the question "did the
+        upstream act on it?" can be asked of the upstream, which is the only
+        place it can be answered.
+        """
+        try:
+            with self.ledger.tx() as tx:
+                rows = tx.receipts_in_state("EXECUTION_UNKNOWN", tenant)
+        except StorageError as exc:
+            raise MandateError("storage error") from exc
+        return [json.loads(r["body"]) | {"tenant": r["tenant"]} for r in rows]
+
+    def resolve_unknown(
+        self, receipt_id: str, outcome: str, *, operator: str, reason: str,
+        tenant: str = DEFAULT_TENANT, budget_day: str | None = None,
+    ) -> dict[str, Any]:
+        """Record a human's finding about an EXECUTION_UNKNOWN receipt.
+
+        The engine cannot know whether the upstream acted; a person who asked
+        the upstream can. Their answer settles the reservation — committed if
+        the call took effect, released if it did not — and becomes part of the
+        receipt, signed and chained like every other state, with who decided
+        and why. Until now the only way out of EXECUTION_UNKNOWN was to edit
+        the database, which is exactly what the chain exists to catch.
+
+        `budget_day` is needed only for a receipt from before budget bindings
+        that records no reservation day; see `_settlement`.
+        """
+        if outcome not in {"EXECUTED", "EXECUTION_FAILED"}:
+            raise MandateError("outcome must be EXECUTED or EXECUTION_FAILED")
+        operator, reason = (operator or "").strip(), (reason or "").strip()
+        if not operator or not reason:
+            raise MandateError("a resolution needs the operator's name and a reason")
+        if len(operator) > 200 or len(reason) > 2000:
+            raise MandateError("operator is limited to 200 characters and reason to 2000")
+        if any(not ch.isprintable() for ch in operator + reason.replace("\n", " ")):
+            raise MandateError("operator and reason must be printable text")
+        try:
+            with self.ledger.tx() as tx:
+                row = tx.get_receipt(receipt_id, tenant=tenant)
+                if row is None:
+                    raise MandateError("receipt not found")
+                if row["state"] != "EXECUTION_UNKNOWN":
+                    raise MandateError(f"receipt is {row['state']}, not EXECUTION_UNKNOWN")
+                body = json.loads(row["body"])
+                gid, curr, day, amount = self._settlement(tx, row, body, budget_day)
+                new_body = {k: v for k, v in body.items() if k != "proof"}
+                new_body["outcome"] = outcome
+                execution = dict(new_body.get("execution") or {})
+                execution["state"] = outcome
+                execution["resolution"] = {
+                    "from": "EXECUTION_UNKNOWN",
+                    "decided": outcome,
+                    "by": operator,
+                    "reason": reason,
+                    "at": iso(self._now()),
+                    "budget_day": day,
+                }
+                new_body["execution"] = execution
+                signed = sign_object(self.enforcer, new_body)
+                if not tx.cas_state(
+                    receipt_id, "EXECUTION_UNKNOWN", outcome, signed,
+                    chain=self._chain(tx, row["tenant"], receipt_id, outcome, signed),
+                ):
+                    raise MandateError("receipt changed state while it was being resolved")
+                if outcome == "EXECUTED":
+                    tx.commit_budget(gid, curr, day, amount)
+                else:
+                    tx.release_budget(gid, curr, day, amount)
+                prior = tx.get_execution_by_receipt(receipt_id)
+                if prior:
+                    tx.put_execution(
+                        prior["id"], receipt_id, prior["idempotency_key"], outcome, execution
+                    )
+                tx.audit(
+                    "execution.resolved",
+                    {"receipt_id": receipt_id, "outcome": outcome, "by": operator, "budget_day": day},
+                    receipt_id,
+                )
+                return signed
+        except StorageError as exc:
+            raise MandateError("storage error") from exc
+        except SigningError as exc:
+            raise MandateError("the resolution could not be signed") from exc
 
     def _is_stale(self, started_at: str | None) -> bool:
         cutoff = self._now() - timedelta(seconds=self.execution_stale_after_s)

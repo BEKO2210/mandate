@@ -17,6 +17,12 @@ Startup runs `Engine.reconcile_stale_executions()`: receipts left in EXECUTING
 by a process that died are closed as EXECUTION_UNKNOWN, keeping their
 reservation.
 
+`mandate gateway unknown --config gateway.json` lists those receipts with the
+method, destination, idempotency key and request hash — what to ask the
+upstream about. `mandate gateway resolve --config gateway.json --receipt …
+--outcome executed|failed --by … --reason …` records the answer: signed,
+chained, and settling the reservation.
+
 Every endpoint but `/health` requires `Authorization: Bearer mk_<id>_<secret>`.
 The key names a tenant and carries scopes: `intents:write`, `approvals:write`,
 `receipts:read`, or `*`. A missing or invalid key is 401, a valid key without

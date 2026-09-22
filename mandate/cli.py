@@ -18,6 +18,64 @@ def _ledger(path: str | Path) -> Ledger:
     return Ledger(Path(path))
 
 
+def _add_resolution_commands(group) -> None:
+    unknown = group.add_parser(
+        "unknown", help="List receipts whose outcome nobody knows (EXECUTION_UNKNOWN)"
+    )
+    unknown.add_argument("--config", required=True)
+    unknown.add_argument("--tenant", default=None)
+    resolve = group.add_parser(
+        "resolve",
+        help="Record what the upstream says happened to an EXECUTION_UNKNOWN receipt",
+    )
+    resolve.add_argument("--config", required=True)
+    resolve.add_argument("--receipt", required=True)
+    resolve.add_argument("--tenant", default="default")
+    resolve.add_argument(
+        "--outcome", required=True, choices=["executed", "failed"],
+        help="executed: the upstream acted, the budget is spent. failed: it did not, "
+             "the reservation is released.",
+    )
+    resolve.add_argument("--by", required=True, help="Who checked the upstream")
+    resolve.add_argument("--reason", required=True, help="What they found, and where")
+    resolve.add_argument(
+        "--budget-day", default=None,
+        help="Only for a receipt from before budget bindings that records no "
+             "reservation day: the day (YYYY-MM-DD) it reserved",
+    )
+
+
+def _resolution(engine, args) -> int:
+    from .engine import MandateError
+
+    if args.resolve_cmd == "unknown":
+        rows = engine.unknown_receipts(args.tenant)
+        for rec in rows:
+            execution = rec.get("execution") or {}
+            request = execution.get("request") or {}
+            print(f"{rec['id']}  {rec['tenant']:<12} {rec.get('intent', {}).get('action', '?')}")
+            print(f"{'':22}{request.get('method', '?')} {request.get('destination', '?')}")
+            print(f"{'':22}idempotency {execution.get('idempotency_key', '?')}, "
+                  f"request {request.get('hash', '?')}, started {execution.get('started_at', '?')}")
+            print(f"{'':22}{execution.get('error') or ''}")
+        if not rows:
+            print("no receipts in EXECUTION_UNKNOWN")
+        return 0
+
+    outcome = "EXECUTED" if args.outcome == "executed" else "EXECUTION_FAILED"
+    try:
+        rec = engine.resolve_unknown(
+            args.receipt, outcome, operator=args.by, reason=args.reason, tenant=args.tenant,
+            budget_day=args.budget_day,
+        )
+    except MandateError as exc:
+        print(f"not resolved: {exc}", file=sys.stderr)
+        return 1
+    settled = "committed" if outcome == "EXECUTED" else "released"
+    print(f"{rec['id']}: EXECUTION_UNKNOWN -> {outcome}, reservation {settled}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="mandate", description="Identity + Permission + Transaction OS for AI agents")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -53,6 +111,7 @@ def main(argv: list[str] | None = None) -> int:
     mcp_init.add_argument("--config", required=True)
     mcp_serve = mcp_sub.add_parser("serve", help="Serve the guard on stdio")
     mcp_serve.add_argument("--config", required=True)
+    _add_resolution_commands(mcp_sub)
 
     ch = sub.add_parser("chain", help="Inspect the receipt chain")
     ch_sub = ch.add_subparsers(dest="chain_cmd", required=True)
@@ -102,6 +161,7 @@ def main(argv: list[str] | None = None) -> int:
         "check", help="Validate the configuration and prove the enforcer can sign"
     )
     gw_check.add_argument("--config", required=True)
+    _add_resolution_commands(gw_sub)
     gw_serve = gw_sub.add_parser("serve", help="Serve the gateway")
     gw_serve.add_argument("--config", required=True)
     gw_serve.add_argument("--host", default="127.0.0.1")
@@ -178,6 +238,13 @@ def _mcp(args) -> int:
             print(f"principal key: {config.store_path / 'keys' / 'principal.key'} (development key)")
         print(f"keys in   : {config.store_path / 'keys'} (keep them private)")
         return 0
+
+    if args.mcp_cmd in {"unknown", "resolve"}:
+        from .mcp.server import build_engine
+
+        engine, _ = build_engine(config, _refuse_call, sorted(config.mapping.rules))
+        args.resolve_cmd = args.mcp_cmd
+        return _resolution(engine, args)
 
     if args.mcp_cmd == "serve":
         import anyio
@@ -341,6 +408,12 @@ def _gateway(args) -> int:
     except (GatewayConfigError, OSError) as exc:
         print(f"configuration: INVALID — {exc}", file=sys.stderr)
         return 1
+
+    if args.gateway_cmd in {"unknown", "resolve"}:
+        from .gateway_config import build_engine
+
+        args.resolve_cmd = args.gateway_cmd
+        return _resolution(build_engine(config), args)
 
     if args.gateway_cmd == "check":
         failed = False

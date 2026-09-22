@@ -40,7 +40,8 @@ and `docs/SECURITY_BACKLOG.md`:
   end: detecting truncation requires a head kept outside the deployment
 - The chain is signed by the enforcer key, so a compromise of that key allows
   history and chain to be re-signed together
-- `EXECUTION_UNKNOWN` holds its reservation until a human reconciles it
+- `EXECUTION_UNKNOWN` holds its reservation until an operator resolves it;
+  the resolution is only as true as the operator's finding
 - The receipt binds the body the gateway committed to sending, not proof of
   upstream receipt
 - The MCP guard is the enforcement boundary; code running inside it can make

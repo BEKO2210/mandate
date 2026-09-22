@@ -15,11 +15,15 @@ when present it must agree with the decimal amount.
 ## Execution states
 
 PROPOSED -> DENIED | HUMAN_REQUIRED | AUTHORIZED -> EXECUTING -> EXECUTED |
-EXECUTION_FAILED | EXECUTION_UNKNOWN.
+EXECUTION_FAILED | EXECUTION_UNKNOWN; EXECUTION_UNKNOWN -> EXECUTED |
+EXECUTION_FAILED by an operator's resolution only.
 
 EXECUTING is a claim, not a result: it is stored as a signed receipt so a
 crashed dispatch is never reported as AUTHORIZED. Only EXECUTION_UNKNOWN keeps
-its budget reservation.
+its budget reservation, until someone who asked the upstream resolves it:
+`EXECUTED` commits the reservation, `EXECUTION_FAILED` releases it. The
+finding — who, why, when — is written into `execution.resolution`, and the
+receipt is re-signed and chained like every other state.
 
 ## Operations and request binding (0.3.0)
 

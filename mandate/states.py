@@ -10,12 +10,12 @@ ALLOWED: dict[str, frozenset[str]] = {
     "EXECUTING": frozenset({"EXECUTED", "EXECUTION_FAILED", "EXECUTION_UNKNOWN"}),
     "EXECUTED": frozenset(),
     "EXECUTION_FAILED": frozenset(),
-    "EXECUTION_UNKNOWN": frozenset(),
+    # Not terminal: a person who asked the upstream can settle it, and that
+    # finding is signed and chained (Engine.resolve_unknown).
+    "EXECUTION_UNKNOWN": frozenset({"EXECUTED", "EXECUTION_FAILED"}),
 }
 
-TERMINAL = frozenset(
-    {"DENIED", "EXECUTED", "EXECUTION_FAILED", "EXECUTION_UNKNOWN"}
-)
+TERMINAL = frozenset({"DENIED", "EXECUTED", "EXECUTION_FAILED"})
 
 
 class InvalidTransition(Exception):

@@ -171,7 +171,7 @@ Route and key configuration outside code and CLI, and nonce pruning are not impl
 
 The receipt binds the request body the gateway *committed to sending*. It does not prove the upstream received those bytes; only the response hash speaks to that.
 
-On timeout or an unknown executor error the state is `EXECUTION_UNKNOWN` and the reservation is kept. Reconciling it is a human decision.
+On timeout or an unknown executor error the state is `EXECUTION_UNKNOWN` and the reservation is kept. Settling it is a human decision, recorded with `mandate gateway resolve` — signed, chained, with who decided and why.
 
 A key manager does not bound a live compromise: code inside the signing process can ask it for signatures for as long as it is there. Without `principal_signer`, the key that issues grants is a local development file.
 

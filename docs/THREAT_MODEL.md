@@ -41,7 +41,11 @@ dispatched. If this process dies before the result transaction, the receipt
 stays EXECUTING until `reconcile_stale_executions()` moves it to
 EXECUTION_UNKNOWN; the gateway runs that at startup. Whether the upstream saw
 the request is unknowable from here, so the reservation is kept and freeing it
-stays a human decision. An exception out of the executor is treated the same
+stays a human decision — `mandate gateway resolve` (or `mandate mcp resolve`)
+records that decision, signed and chained, with the operator's name and
+reason. A receipt from before budget bindings that records no reservation day
+cannot be settled until the operator names the day; the engine does not guess
+it. An exception out of the executor is treated the same
 way. Neither path re-dispatches: the execution claim remains single-use.
 
 ## Request composition

@@ -128,6 +128,10 @@ route allowlists the same shape as the HTTP side.
 | Tool reports an error (`isError`) | `EXECUTION_FAILED` | released |
 | Timeout or broken transport | `EXECUTION_UNKNOWN` | kept reserved |
 
+`mandate mcp unknown --config guard.json` lists the unknown outcomes with what
+was sent; `mandate mcp resolve --config guard.json --receipt … --outcome
+executed|failed --by … --reason …` records what the upstream says happened.
+
 A tool error is treated like a non-2xx HTTP response: the call happened and
 failed. A broken pipe is not — the tool may have run before the transport
 died, so the outcome is unknown and the reservation stays until a human

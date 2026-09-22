@@ -608,6 +608,15 @@ class _Tx:
             return None
         return dict(row)
 
+    def receipts_in_state(self, state: str, tenant: str | None = None) -> list[sqlite3.Row]:
+        if tenant is None:
+            return self.l._conn.execute(
+                "SELECT * FROM receipts WHERE state=? ORDER BY id", (state,)
+            ).fetchall()
+        return self.l._conn.execute(
+            "SELECT * FROM receipts WHERE state=? AND tenant=? ORDER BY id", (state, tenant)
+        ).fetchall()
+
     def cas_state(
         self, receipt_id: str, src: str, dst: str, body: dict | None = None,
         chain: dict | None = None,
