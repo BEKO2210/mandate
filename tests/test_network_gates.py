@@ -128,12 +128,20 @@ def test_g204_a_proxy_in_the_environment_is_not_obeyed(two_peers, monkeypatch):
     assert len(two_peers["approved"].hits) == 1
 
 
-def test_g205_certificate_verification_cannot_be_switched_off():
-    """A destination check that ends at an unauthenticated peer checks nothing."""
+def test_g205_certificate_verification_cannot_be_switched_off(tmp_path):
+    """A destination check that ends at an unauthenticated peer checks nothing.
+
+    And a private CA that is misconfigured fails when the gateway starts, not
+    on the first authorized request — by then the receipt is already signed
+    and the only honest outcome left is a failure the operator could have
+    been told about at boot.
+    """
     with pytest.raises(ValueError, match="cannot be disabled"):
         UpstreamExecutor(verify=False)
-    UpstreamExecutor()                     # the system trust store
-    UpstreamExecutor(verify="/some/ca.pem")  # a private CA, by path
+    UpstreamExecutor()                                  # the system trust store
+    UpstreamExecutor(verify=str(make_pki(tmp_path)))    # a private CA that exists
+    with pytest.raises(OSError):
+        UpstreamExecutor(verify=str(tmp_path / "no-such-ca.pem"))
 
 
 def test_g206_plain_http_is_pinned_too(tmp_path, monkeypatch):

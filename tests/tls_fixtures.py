@@ -34,8 +34,19 @@ def make_pki(directory: pathlib.Path, names: tuple[str, ...] = (HOST,)) -> pathl
         .not_valid_before(now - datetime.timedelta(days=1))
         .not_valid_after(now + datetime.timedelta(days=1))
         .add_extension(x509.BasicConstraints(ca=True, path_length=None), critical=True)
+        .add_extension(x509.KeyUsage(
+            digital_signature=True, key_cert_sign=True, crl_sign=True,
+            content_commitment=False, key_encipherment=False, data_encipherment=False,
+            key_agreement=False, encipher_only=False, decipher_only=False,
+        ), critical=True)
+        # Python 3.13 turns on VERIFY_X509_STRICT, which rejects a chain whose
+        # certificates lack key identifiers. Real certificates carry them;
+        # the first version of these fixtures did not, and passed on 3.11.
+        .add_extension(x509.SubjectKeyIdentifier.from_public_key(ca_key.public_key()),
+                       critical=False)
         .sign(ca_key, hashes.SHA256())
     )
+    ca_ski = ca.extensions.get_extension_for_class(x509.SubjectKeyIdentifier).value
     (directory / "ca.pem").write_bytes(ca.public_bytes(serialization.Encoding.PEM))
     for name in names:
         key = ec.generate_private_key(ec.SECP256R1())
@@ -47,6 +58,15 @@ def make_pki(directory: pathlib.Path, names: tuple[str, ...] = (HOST,)) -> pathl
             .not_valid_before(now - datetime.timedelta(days=1))
             .not_valid_after(now + datetime.timedelta(days=1))
             .add_extension(x509.SubjectAlternativeName([x509.DNSName(name)]), critical=False)
+            .add_extension(x509.BasicConstraints(ca=False, path_length=None), critical=True)
+            .add_extension(x509.ExtendedKeyUsage([x509.oid.ExtendedKeyUsageOID.SERVER_AUTH]),
+                           critical=False)
+            .add_extension(x509.SubjectKeyIdentifier.from_public_key(key.public_key()),
+                           critical=False)
+            .add_extension(
+                x509.AuthorityKeyIdentifier.from_issuer_subject_key_identifier(ca_ski),
+                critical=False,
+            )
             .sign(ca_key, hashes.SHA256())
         )
         (directory / f"{name}.pem").write_bytes(leaf.public_bytes(serialization.Encoding.PEM))

@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import ipaddress
 import socket
+import ssl
 from urllib.parse import urlparse
 
 import httpx
@@ -159,7 +160,11 @@ class UpstreamExecutor:
     def __init__(self, verify: bool | str = True) -> None:
         if verify is False:
             raise ValueError("certificate verification cannot be disabled")
-        self._verify = verify
+        # httpx deprecates a CA *path*; build the context here so the policy —
+        # hostname checking on, the platform's strictness kept — is ours.
+        self._verify: bool | ssl.SSLContext = (
+            ssl.create_default_context(cafile=verify) if isinstance(verify, str) else verify
+        )
 
     def forward(
         self, route: Route, method: str, path: str, body: bytes, idempotency_key: str
