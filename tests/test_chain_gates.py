@@ -20,7 +20,7 @@ from datetime import timedelta
 import pytest
 
 from mandate import chain as chainlib
-from mandate.crypto import KeyPair, sign_object, utcnow, verify_object
+from mandate.crypto import KeyPair, utcnow, verify_object
 from mandate.engine import Engine
 from mandate.executor import ExecutionResult
 from mandate.ledger import Ledger, StorageError
@@ -402,7 +402,13 @@ def test_g176_balancing_the_receipt_count_does_not_hide_a_swap(tmp_path):
     engine, db, ids, _ = _world(tmp_path / "b", calls=4)
     _sql(db, "DELETE FROM chain WHERE receipt_id=?", ids[1])
     _sql(db, "DELETE FROM receipts WHERE id=?", ids[1])
-    assert not engine.verify_chain().ok
+    report = engine.verify_chain()
+    assert not report.ok
+    # Named, not merely counted: "not ok" is satisfied by any finding at all,
+    # including one that has nothing to do with the links this variant claims
+    # to break. Review found this shape in G188 and here.
+    assert report.broken_at == 4, report
+    assert "expected seq 4" in (report.reason or ""), report
 
     # 3. Do it at the tail, where the links survive: the count catches it.
     engine, db, ids, _ = _world(tmp_path / "c", calls=4)
@@ -768,7 +774,11 @@ def test_g188_a_body_the_interpreter_can_parse_is_still_reconciled(tmp_path):
 
     report = _poisoned_world(tmp_path, mutate)
     assert not report.ok
-    assert any(report.mismatches), report
+    # The claim is that the *changed body* is caught. Asserting "not ok" and
+    # the unrelated rollback would be satisfied by a verifier that ignored the
+    # edit entirely — the same assertion-shape defect G189 had.
+    assert any("contents changed after it was chained" in m
+               for m in report.mismatches), report.mismatches
     assert any("DENIED" in m for m in report.mismatches), report.mismatches
 
 
@@ -799,13 +809,29 @@ def test_g189_the_file_verifier_says_invalid_instead_of_crashing(tmp_path, capsy
         path = tmp_path / f"hostile-{i}.json"
         path.write_text(json.dumps(obj), encoding="utf-8")
         assert main(["verify", str(path)]) == 1, obj
-        assert capsys.readouterr().out == "INVALID\n", obj
+        captured = capsys.readouterr()
+        assert captured.out == "INVALID\n", obj
+        # A caught traceback on stderr is still a traceback. The verdict is
+        # the whole output, not the part that happens to be on stdout.
+        assert captured.err == "", obj
 
     # The other half: a genuine receipt must still come back VALID and 0, or
     # the gate above is satisfied by a command that condemns everything.
-    kp = KeyPair.generate()
-    signed = sign_object(kp, {"id": "rcpt_real", "summary": "a real one"})
+    #
+    # It is a receipt from the pipeline, not a hand-built dict handed to
+    # `sign_object`. `sign_object` signs any dictionary, so signing one here
+    # would prove that a valid signature verifies — true, and not the claim.
+    # The claim is that what this system actually produces still passes.
+    # Review caught the substitution.
+    engine, db, ids, _ = _world(tmp_path / "genuine-world", calls=1)
+    engine.ledger.close()
+    con = sqlite3.connect(db)
+    con.row_factory = sqlite3.Row
+    stored = con.execute("SELECT body FROM receipts WHERE id=?", (ids[0],)).fetchone()
+    con.close()
     good = tmp_path / "genuine.json"
-    good.write_text(json.dumps(signed), encoding="utf-8")
+    good.write_text(stored["body"], encoding="utf-8")
     assert main(["verify", str(good)]) == 0
-    assert capsys.readouterr().out == "VALID\n"
+    captured = capsys.readouterr()
+    assert captured.out == "VALID\n"
+    assert captured.err == ""

@@ -49,6 +49,16 @@ ordinary tampering in the same database that went unreported because of it.
   everything. A test that overstates what it checks is the same failure as a
   verifier that says nothing.
 
+- **Three gates established a failure, but not the failure they claimed.**
+  G188 asserted that the report was not OK and that an unrelated rollback was
+  still visible — a verifier that ignored the edited body entirely would have
+  passed it. G176's second variant asserted only `not ok`, where the claim is
+  that the links break at a named position. G189's positive case signed a
+  hand-built dict rather than using a receipt from the pipeline, and allowed a
+  caught traceback on stderr. All three now assert the content they are about.
+  Asking whether other gates had the same shape was worth more than any single
+  fix in this release.
+
 Gates G186-G189. Full suite: 210 passed on Python 3.11 and 3.13.
 
 ## [0.7.0] — 2026-09-22
