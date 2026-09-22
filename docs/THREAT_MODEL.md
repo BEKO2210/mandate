@@ -1,4 +1,4 @@
-# Threat model (v0.4.0)
+# Threat model (v0.5.0)
 
 TRUSTED: gateway, KeyProvider, route registry, SQLite tx layer, executor code, server-side Route.network_policy, the api_keys table.
 UNTRUSTED: agent, agent JSON, network, unsigned human input, upstream bodies, DNS answers.
@@ -78,3 +78,20 @@ The rate limiter is in-process. It bounds one gateway process, which is the
 same scope as the single-file SQLite ledger it protects. Running several
 gateway processes against one ledger would need a shared limiter, and is not
 supported today.
+
+## The MCP guard
+
+The guard is a local process that speaks MCP to the model on one side and to an
+upstream MCP server on the other. It holds the agent key and signs intents with
+it, because a model cannot sign. The enforcement boundary is therefore the
+guard process: anything able to run code inside it can make it sign, and the
+grant's limits are what stand between it and the upstream.
+
+Tool arguments are untrusted. They never become named fields of a signed
+intent — an MCP tool may take a `url` or a `host`, key names the validator
+forbids — but travel as one canonical document whose hash the receipt binds
+before dispatch. Only tools the configuration mapped are exposed, so the model
+cannot reach a tool nobody classified.
+
+Unlike the HTTP gateway there is no API key and no tenant check on the way in.
+The caller is the local process that spawned the guard, not a remote client.

@@ -41,6 +41,10 @@ class Operation:
     path: str
     fields: tuple[str, ...] = ("action", "amount", "currency", "execution_id")
     context_fields: tuple[str, ...] = ()
+    # Per-operation cap on a forwarded string, decided server-side. The global
+    # default stays small; an operation that genuinely carries a larger value
+    # (an MCP argument document, say) raises it deliberately.
+    max_string: int = 0
 
     def __post_init__(self) -> None:
         if not self.action:
@@ -59,6 +63,8 @@ class Operation:
         overlap = set(self.fields) & set(self.context_fields)
         if overlap:
             raise RouteConfigError(f"context field shadows intent field {sorted(overlap)}")
+        if self.max_string < 0:
+            raise RouteConfigError("max_string cannot be negative")
 
 
 @dataclass(frozen=True)

@@ -1,10 +1,35 @@
-# Mandate v0.4.0
+# Mandate v0.5.0
 
 Enforcement gateway for AI-agent grants.
 
 An agent cannot call a protected upstream unless the gateway has a currently valid principal authorization — and cannot reach the gateway at all without a key.
 
-## What v0.4.0 adds
+## What v0.5.0 adds
+
+**Mandate in front of MCP tools.** The guard sits between a model and an
+existing MCP server, re-exposes that server's tools with their own schemas, and
+turns every call into a signed intent evaluated against a grant. Nothing on the
+model's side changes — same tool names, same arguments, one refusal it has to
+respect.
+
+```bash
+pip install "mandate[mcp]"
+mandate mcp init  --config guard.json
+mandate mcp serve --config guard.json
+```
+
+```
+create_issue        -> UPSTREAM RAN create_issue on beko/mandate     isError: False
+pay_invoice 900 EUR -> Mandate denied this call: amount 900.00 exceeds
+                       max_amount 100.00 … limit of grant grant_a34…  isError: True
+delete_repository   -> not exposed: the configuration never mapped it
+```
+
+A tool that is not mapped is not exposed. A refusal names the rule, the grant
+and the receipt, so the agent can act on it instead of retrying. See
+[docs/MCP.md](docs/MCP.md).
+
+## What v0.4.0 established
 
 - **Transport authentication.** Every endpoint but `/health` requires `Authorization: Bearer mk_<id>_<secret>`. Only the SHA-256 of the secret is stored, comparison is constant time, and an unknown key id takes the same path as a wrong secret.
 - **Tenancy.** Principals, agents, grants, receipts, nonces and routes belong to a tenant; the key decides which one. Another tenant's record reads as *absent*, never as forbidden, so a valid key cannot be used to confirm that an id exists.
@@ -77,3 +102,5 @@ python3 -m pytest tests/ -q
 ```
 
 Gateway: GET /health, GET /v1/info, POST /v1/intents, POST /v1/approvals, GET /v1/receipts/{id}
+
+MCP guard: `mandate mcp serve --config guard.json`

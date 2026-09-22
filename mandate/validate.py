@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from .crypto import utcnow
+from .crypto import canonical_json, utcnow
 from .money import MoneyError, require_minor, to_minor
 
 AUDIENCE_RE = re.compile(r"^mandate://[a-z0-9][a-z0-9._-]{0,63}$")
@@ -98,6 +98,23 @@ def require_amount_agreement(body: dict[str, Any], amount_minor: int | None) -> 
         raise ValidationError(str(exc)) from exc
     if amount_minor is None or declared != amount_minor:
         raise ValidationError("amount_minor does not match amount")
+
+
+def require_context(context: Any) -> dict[str, Any]:
+    """Bound the agent-supplied context.
+
+    MAX_CONTEXT_BYTES was declared from the start but never checked, so the
+    only thing limiting an intent's context was the 32 KiB body cap. It is
+    enforced here, against the canonical bytes that get signed.
+    """
+    if context is None:
+        return {}
+    if not isinstance(context, dict):
+        raise ValidationError("context must be an object")
+    size = len(canonical_json(context))
+    if size > MAX_CONTEXT_BYTES:
+        raise ValidationError(f"context is {size} bytes, limit is {MAX_CONTEXT_BYTES}")
+    return context
 
 
 def require_did(value: str) -> str:

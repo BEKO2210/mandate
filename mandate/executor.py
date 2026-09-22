@@ -20,12 +20,16 @@ class ExecutionResult:
         latency_ms: int,
         body_hash: str | None,
         error: str | None = None,
+        payload: object | None = None,
     ) -> None:
         self.state = state
         self.status = status
         self.latency_ms = latency_ms
         self.body_hash = body_hash
         self.error = error
+        # In-process transport for the upstream's response. Only its hash is
+        # signed into the receipt; the payload itself is never persisted.
+        self.payload = payload
 
 
 _BLOCKED_HOSTS = {

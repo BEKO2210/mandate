@@ -22,7 +22,7 @@ from .engine import Engine, MandateError
 from .limits import BodyLimitMiddleware
 from .validate import ValidationError, reject_forbidden
 
-VERSION = "0.4.0"
+VERSION = "0.5.0"
 
 
 class IntentEnvelope(BaseModel):

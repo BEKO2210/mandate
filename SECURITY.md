@@ -40,6 +40,8 @@ and `docs/SECURITY_BACKLOG.md`:
 - The receipt binds the body the gateway committed to sending, not proof of
   upstream receipt
 - Routes and operations are configured in code, not from a file or admin API
+- The MCP guard holds the agent key, so its process is the enforcement
+  boundary; code running inside it can make it sign
 
 ## Supported versions
 

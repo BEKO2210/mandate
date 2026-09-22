@@ -47,6 +47,13 @@ def main(argv: list[str] | None = None) -> int:
     off.add_argument("--db", default=str(DEFAULT_DB))
     off.add_argument("--id", required=True)
 
+    mcp_cmd = sub.add_parser("mcp", help="Run Mandate in front of an MCP server")
+    mcp_sub = mcp_cmd.add_subparsers(dest="mcp_cmd", required=True)
+    mcp_init = mcp_sub.add_parser("init", help="Create the principal, agent and grant")
+    mcp_init.add_argument("--config", required=True)
+    mcp_serve = mcp_sub.add_parser("serve", help="Serve the guard on stdio")
+    mcp_serve.add_argument("--config", required=True)
+
     args = p.parse_args(argv)
 
     if args.cmd == "demo":
@@ -62,7 +69,48 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd == "keys":
         return _keys(args)
 
+    if args.cmd == "mcp":
+        return _mcp(args)
+
     return 2
+
+
+def _mcp(args) -> int:
+    from .mcp.config import load_config, read_state
+
+    config = load_config(args.config)
+
+    if args.mcp_cmd == "init":
+        from .mcp.server import bootstrap, build_engine
+
+        existing = read_state(config)
+        if existing:
+            print(f"already initialized: grant {existing['grant_id']}")
+            return 0
+        # No upstream connection is needed to mint the grant, so the executor
+        # is never called here.
+        engine, _ = build_engine(config, _refuse_call, sorted(config.mapping.rules))
+        state = bootstrap(config, engine)
+        print(f"principal : {state['principal_did']}")
+        print(f"agent     : {state['agent_did']}")
+        print(f"grant     : {state['grant_id']}")
+        print(f"scopes    : {', '.join(config.scopes())}")
+        print(f"keys in   : {config.store_path / 'keys'} (development keys, keep them private)")
+        return 0
+
+    if args.mcp_cmd == "serve":
+        import anyio
+
+        from .mcp.server import serve
+
+        anyio.run(serve, config)
+        return 0
+
+    return 2
+
+
+async def _refuse_call(name: str, arguments: dict) -> None:
+    raise RuntimeError("this engine was built for setup only and cannot dispatch")
 
 
 def _keys(args) -> int:

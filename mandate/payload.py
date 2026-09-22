@@ -24,7 +24,7 @@ class PayloadError(ValueError):
     pass
 
 
-def _scalar(value: Any, where: str) -> Any:
+def _scalar(value: Any, where: str, max_string: int = MAX_STRING) -> Any:
     if value is None or isinstance(value, bool):
         return value
     if isinstance(value, int):
@@ -34,8 +34,8 @@ def _scalar(value: Any, where: str) -> Any:
             raise PayloadError(f"{where} is not a finite number")
         return value
     if isinstance(value, str):
-        if len(value) > MAX_STRING:
-            raise PayloadError(f"{where} exceeds {MAX_STRING} characters")
+        if len(value) > max_string:
+            raise PayloadError(f"{where} exceeds {max_string} characters")
         return value
     # Nested structures would let an agent smuggle shapes the operation never
     # declared, so only scalars cross the boundary.
@@ -67,10 +67,11 @@ def build_payload(
             "execution_id": execution_id,
         }
 
+    limit = operation.max_string or MAX_STRING
     payload: dict[str, Any] = {}
     for name in operation.fields:
         payload[name] = _scalar(
-            _intent_value(name, intent, execution_id, amount_minor), f"field {name}"
+            _intent_value(name, intent, execution_id, amount_minor), f"field {name}", limit
         )
 
     context = intent.context or {}
@@ -79,7 +80,7 @@ def build_payload(
             # A declared field is part of the operation's contract. Guessing a
             # default here would send the upstream something nobody signed.
             raise PayloadError(f"context field {key} is required by this operation")
-        payload[key] = _scalar(context[key], f"context field {key}")
+        payload[key] = _scalar(context[key], f"context field {key}", limit)
     return payload
 
 
