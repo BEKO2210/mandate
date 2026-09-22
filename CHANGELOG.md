@@ -40,6 +40,25 @@ that bounds them instead of a paragraph that admits them.
   inside whichever block happened to run, which is how a finding ends up in a
   report that still says ok.
 
+### Fixed before review saw it
+
+- **The rotation marker was a hiding place.** Rotation gave the chain an entry
+  kind that reconciliation deliberately skips — and that skip is a hole if a
+  *receipt row* can wear the same name. A row whose id column is
+  `chain:signer-rotation`, copied from a genuine receipt so its proof still
+  verifies, was invisible twice over: `unchained_receipts` found the rotation
+  entry and called the row chained, and reconciliation skipped that entry so
+  nothing compared it. Closed from both sides — the count no longer credits a
+  rotation entry as cover for a receipt, and a receipt row carrying the
+  reserved id is a finding in itself. Introduced by this release's own
+  feature, found by asking what the reserved name could be turned into.
+  Gate G198.
+- A hostile anchor file was checked for the failure mode that has bitten this
+  code three times: it may add noise, and may not remove a finding or end the
+  run. Garbage seqs, a null tenant, unparseable lines and `1e400` all produce
+  findings while the real tampering in the same database is still reported.
+  Gate G199.
+
 ### Still open
 
 A chain cannot prove what was removed from its own end *without an anchor*, so

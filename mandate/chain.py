@@ -469,6 +469,15 @@ def verify_chain(
         # secret — only the DID the proof already names — so every receipt is
         # asked, chained or not.
         for receipt_id, row in sorted(stored.items()):
+            if receipt_id == ROTATION_ID:
+                # No receipt is ever created with this id — they are `rcpt_…`.
+                # A row carrying the marker is an attempt to hide behind the
+                # one entry kind that reconciliation deliberately skips.
+                report.mismatches.append(
+                    f"a receipt row carries the reserved id {ROTATION_ID!r}, "
+                    f"which only a chain entry may use"
+                )
+                continue
             if row.get("error") or row.get("proof_ok", True):
                 continue
             report.mismatches.append(

@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from .chain import body_hash as chain_body_hash
-from .chain import loads_strict
+from .chain import ROTATION_ID, loads_strict
 from .crypto import iso, utcnow, verify_object
 from .money import exponent, from_minor
 from .states import InvalidTransition, assert_transition
@@ -794,11 +794,18 @@ class _Tx:
             return 0
 
     def unchained_receipts(self, tenant: str) -> int:
-        """Receipts with no entry at all — the ones that predate the chain."""
+        """Receipts with no entry at all — the ones that predate the chain.
+
+        A rotation entry is not an entry *for a receipt*, so it cannot vouch
+        for one. Without that exclusion, inserting a receipt row whose id is
+        the rotation marker makes this count skip it: the EXISTS finds the
+        rotation entry and calls the row chained. Found by trying it.
+        """
         row = self.l._conn.execute(
             """SELECT COUNT(*) AS n FROM receipts r WHERE r.tenant=?
-               AND NOT EXISTS (SELECT 1 FROM chain c WHERE c.receipt_id = r.id)""",
-            (tenant,),
+               AND NOT EXISTS (SELECT 1 FROM chain c
+                               WHERE c.receipt_id = r.id AND c.receipt_id <> ?)""",
+            (tenant, ROTATION_ID),
         ).fetchone()
         return int(row["n"]) if row else 0
 
