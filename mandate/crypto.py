@@ -168,6 +168,12 @@ def verify_object(obj: dict[str, Any], expected_did: str | None = None) -> bool:
 
 
 def _verify_object(obj: dict[str, Any], expected_did: str | None) -> bool:
+    """The checks themselves. Free to raise — `verify_object` is the boundary.
+
+    Split out so the fail-closed behaviour lives in exactly one place. Nothing
+    should call this directly: a caller that does gets the exceptions the
+    public function exists to absorb.
+    """
     if not isinstance(obj, dict) or not isinstance(obj.get("proof"), dict):
         return False
     proof = obj["proof"]

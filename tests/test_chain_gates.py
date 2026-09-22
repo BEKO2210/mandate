@@ -727,6 +727,7 @@ def test_g186_a_proof_that_is_not_an_object_is_answered_not_raised(tmp_path):
                                     "proofValue": ""}}) is False
 
     def mutate(raw):
+        """Replace the proof with a list, so `.get` has nothing to answer."""
         body = json.loads(raw)
         body["proof"] = []
         return json.dumps(body)
@@ -752,6 +753,7 @@ def test_g187_a_deeply_nested_body_is_a_finding_not_a_crash(tmp_path):
     deep = '{"a":' * 25000 + "1" + "}" * 25000
 
     def mutate(raw):
+        """Append nesting past any interpreter's limit, as raw text."""
         return raw[:-1] + ',"pad":' + deep + "}"
 
     report = _poisoned_world(tmp_path, mutate)
@@ -770,6 +772,7 @@ def test_g188_a_body_the_interpreter_can_parse_is_still_reconciled(tmp_path):
     one interpreter's stack limit would leave a hole on another's.
     """
     def mutate(raw):
+        """Append nesting every interpreter parses, so the hash must catch it."""
         return raw[:-1] + ',"pad":' + ('{"a":' * 500 + "1" + "}" * 500) + "}"
 
     report = _poisoned_world(tmp_path, mutate)
