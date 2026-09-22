@@ -1112,6 +1112,14 @@ def test_g199_a_hostile_anchor_file_cannot_silence_the_verifier(tmp_path):
         '{"tenant": "default", "seq": 1e400, "entry_hash": "x"}',
         "",
         '{"tenant": "default", "seq": -1, "entry_hash": "x"}',
+        # Unhashable seqs. The first version of this gate used only scalars —
+        # every one of them hashable — so it proved the verifier survives
+        # *polite* garbage. A list reached `by_seq.get(seq)` and raised
+        # TypeError out of verify_chain, emptying the report. Review found
+        # what my own negative control had been too gentle to.
+        '{"tenant": "default", "seq": [1, 2], "entry_hash": "x"}',
+        '{"tenant": "default", "seq": {"a": 1}, "entry_hash": "x"}',
+        '{"tenant": "default", "seq": true, "entry_hash": "x"}',
     ]) + "\n\n\n", encoding="utf-8")
 
     anchors = _read_anchors(str(path))
@@ -1121,6 +1129,13 @@ def test_g199_a_hostile_anchor_file_cannot_silence_the_verifier(tmp_path):
         assert not report.ok
         # The point of the gate: the real tampering survives the noise.
         assert any("is stored as DENIED" in m for m in report.mismatches), report.mismatches
+        # Six: the three unhashable ones plus 'twelve', a missing seq and
+        # 1e400. Before the type check those four were reported as "the chain
+        # no longer reaches it", which claims a real anchor diverged — a
+        # verifier inventing a finding is its own kind of lie. Only -1 and
+        # 99999999 are integers, so only those two are compared for real.
+        assert sum("unusable seq" in m for m in report.mismatches) == 6, report.mismatches
+        assert sum("no longer reaches it" in m for m in report.mismatches) == 2, report.mismatches
     finally:
         engine.ledger.close()
 
@@ -1133,6 +1148,20 @@ def test_g200_a_rotation_that_rotates_nothing_is_refused(tmp_path):
         with pytest.raises(MandateError, match="changes nothing"):
             engine.rotate_signer(engine.enforcer.did())
         assert engine.verify_chain().ok, "the refusal must not have written anything"
+
+        # And again once a rotation has happened, because then the head *is*
+        # the rotation entry: its `signer` is the key that left and its
+        # `outcome` is the key in charge. The first version of this guard
+        # compared against `signer`, so it let a redundant B->B rotation
+        # through — half-right, which is the worst kind of right.
+        second = KeyPair.generate()
+        engine.rotate_signer(second.did())
+        engine.enforcer = second
+        with pytest.raises(MandateError, match="changes nothing"):
+            engine.rotate_signer(second.did())
+        report = engine.verify_chain()
+        assert report.ok, report.summary()
+        assert report.rotations == 1, "the refused rotation must not have been written"
     finally:
         engine.ledger.close()
 

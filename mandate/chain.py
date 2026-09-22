@@ -334,6 +334,18 @@ def check_anchors(entries: list[dict[str, Any]], anchors: list[dict[str, Any]],
         if anchor.get("tenant") != tenant:
             continue
         seq, expected = anchor.get("seq"), anchor.get("entry_hash")
+        if type(seq) is not int:
+            # `by_seq[seq]` needs a hashable key, and this file comes from
+            # outside the system. A list-valued seq raised TypeError straight
+            # out of verify_chain, taking every later finding with it — the
+            # fourth time that shape has emptied this report. `type(...) is
+            # int` rather than isinstance, because a bool is not a sequence
+            # number either.
+            problems.append(
+                f"an anchor for this tenant has an unusable seq {seq!r}; "
+                f"it cannot be checked against the chain"
+            )
+            continue
         entry = by_seq.get(seq)
         if entry is None:
             problems.append(

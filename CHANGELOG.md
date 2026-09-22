@@ -59,6 +59,21 @@ that bounds them instead of a paragraph that admits them.
   findings while the real tampering in the same database is still reported.
   Gate G199.
 
+- **The no-op rotation guard was half-right.** It compared the incoming key
+  against `head["signer"]` — but after a rotation the head *is* the rotation
+  entry, whose `signer` is the key that left and whose `outcome` is the key in
+  charge. A second, redundant rotation to the key already active therefore
+  passed. It now compares against the active signer. Found by review; a guard
+  that is right only before the first rotation is the worst kind of right.
+- **A hostile anchor could still end the run.** `check_anchors` used the
+  anchor's `seq` as a dictionary key, so a list-valued one raised `TypeError`
+  out of `verify_chain` and took every later finding with it — the fourth time
+  that shape has emptied this report. `seq` is now required to be an integer,
+  and anything else is reported as unusable rather than crashing or, worse,
+  being announced as a real anchor divergence. G199's own hostile file had
+  used only *hashable* garbage, so the negative control had been proving that
+  the verifier survives polite input.
+
 ### Still open
 
 A chain cannot prove what was removed from its own end *without an anchor*, so
