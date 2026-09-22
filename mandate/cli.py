@@ -69,9 +69,32 @@ def main(argv: list[str] | None = None) -> int:
     ch_verify.add_argument(
         "--expect-signer", default=None, help="The enforcer DID you expect to have signed"
     )
+    ch_verify.add_argument(
+        "--anchors",
+        default=None,
+        help="A file of heads kept earlier by `mandate chain anchor`",
+    )
     ch_head = ch_sub.add_parser("head", help="Print the current head, to keep elsewhere")
     ch_head.add_argument("--db", default=str(DEFAULT_DB))
     ch_head.add_argument("--tenant", default="default")
+
+    ch_anchor = ch_sub.add_parser(
+        "anchor", help="Append the current head to a file kept outside this database"
+    )
+    ch_anchor.add_argument("--db", default=str(DEFAULT_DB))
+    ch_anchor.add_argument("--tenant", default=None, help="Default: every tenant")
+    ch_anchor.add_argument(
+        "--file", required=True,
+        help="Where to append. Put it somewhere the database operator cannot reach.",
+    )
+
+    ch_rotate = ch_sub.add_parser(
+        "rotate", help="Record a change of signing key, signed by the key leaving"
+    )
+    ch_rotate.add_argument("--db", default=str(DEFAULT_DB))
+    ch_rotate.add_argument("--tenant", default="default")
+    ch_rotate.add_argument("--config", required=True, help="An MCP guard configuration file")
+    ch_rotate.add_argument("--to", required=True, help="The did:key taking over")
 
     signer = sub.add_parser("signer", help="Inspect the keys Mandate signs with")
     signer_sub = signer.add_subparsers(dest="signer_cmd", required=True)
@@ -145,6 +168,33 @@ def _mcp(args) -> int:
     return 2
 
 
+def _read_anchors(path: str | None) -> list[dict]:
+    """Heads written down earlier, one JSON object per line.
+
+    A line that cannot be read is reported and skipped rather than fatal: the
+    file lives outside this system's control by design, so a verifier that
+    dies on one bad line is a verifier an operator can silence with one bad
+    line.
+    """
+    if not path:
+        return []
+    out: list[dict] = []
+    for number, line in enumerate(Path(path).read_text(encoding="utf-8").splitlines(), 1):
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            record = json.loads(line)
+        except ValueError as exc:
+            print(f"  ! anchor file line {number} is unreadable: {exc}")
+            continue
+        if isinstance(record, dict):
+            out.append(record)
+        else:
+            print(f"  ! anchor file line {number} is not an object")
+    return out
+
+
 def _chain(args) -> int:
     """Verification has to be runnable by someone who does not trust the
     operator, so it reads the database directly and needs no running gateway."""
@@ -163,13 +213,53 @@ def _chain(args) -> int:
             print("Keep this where the operator of this database cannot reach it.")
             return 0
 
+        if args.chain_cmd == "anchor":
+            with engine.ledger.tx() as tx:
+                tenants = [args.tenant] if args.tenant else (tx.chain_tenants() or [])
+            written = 0
+            with open(args.file, "a", encoding="utf-8") as fh:
+                for tenant in tenants:
+                    anchor = engine.anchor_chain(tenant)
+                    if not anchor:
+                        print(f"{tenant}: the chain is empty, nothing to anchor")
+                        continue
+                    fh.write(json.dumps(anchor, sort_keys=True) + "\n")
+                    print(f"{tenant}: seq {anchor['seq']} {anchor['entry_hash']}")
+                    written += 1
+            if written:
+                print(
+                    f"Appended {written} anchor(s) to {args.file}. It is worth "
+                    f"something only where this database's operator cannot edit it."
+                )
+            return 0
+
+        if args.chain_cmd == "rotate":
+            from .mcp.config import load_config
+            from .signing import SigningError
+
+            config = load_config(args.config)
+            try:
+                engine.enforcer = config.build_enforcer_signer() or engine.enforcer
+                entry = engine.rotate_signer(args.to, args.tenant)
+            except (SigningError, ValueError) as exc:
+                print(f"rotation refused: {exc}")
+                return 1
+            print(f"tenant : {args.tenant}")
+            print(f"seq    : {entry['seq']}")
+            print(f"from   : {entry['signer']}")
+            print(f"to     : {entry['outcome']}")
+            print("Signed by the outgoing key. Point the deployment at the new one now.")
+            return 0
+
         if args.chain_cmd == "verify":
+            anchors = _read_anchors(args.anchors)
             with engine.ledger.tx() as tx:
                 tenants = [args.tenant] if args.tenant else (tx.chain_tenants() or ["default"])
             failed = False
             for tenant in tenants:
                 report = engine.verify_chain(
-                    tenant, expect_head=args.expect_head, expect_signer=args.expect_signer
+                    tenant, expect_head=args.expect_head,
+                    expect_signer=args.expect_signer, anchors=anchors,
                 )
                 print(report.summary())
                 for problem in report.mismatches:
@@ -177,10 +267,11 @@ def _chain(args) -> int:
                 for note in report.notes:
                     print(f"  - {note}")
                 failed = failed or not report.ok
-            if not args.expect_head:
+            if not args.expect_head and not anchors:
                 print(
-                    "Note: without --expect-head, entries deleted from the end of the "
-                    "chain cannot be detected."
+                    "Note: with neither --expect-head nor --anchors, entries deleted "
+                    "from the end of the chain cannot be detected. "
+                    "`mandate chain anchor` writes the heads this needs."
                 )
             return 1 if failed else 0
     finally:

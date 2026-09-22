@@ -154,20 +154,19 @@ Covered by G158-G180.
 - No connection-level IP pin for TLS
 - The rate limiter is in-process and bounds one gateway process
 - A chain cannot prove what was removed from its own end; truncation is only
-  detectable against a head kept outside the deployment
+  detectable against a head kept outside the deployment. `mandate chain anchor`
+  now writes those heads and `--anchors` checks them, so this is a deployment
+  obligation rather than an open gap: an anchor stored on the same disk, under
+  the same operator, buys nothing
 - The chain is signed by the enforcer key; a compromise of that key allows
-  history and chain to be re-signed together
+  history and chain to be re-signed together, from the moment it is taken
+  until it is rotated away. `mandate chain rotate` bounds that window — the
+  rotation entry is signed by the outgoing key, so a thief cannot reach back
+  past it — but nothing bounds what the key does while it is held
 - The legacy baseline is trusted on first use: a tenant whose chain is still
   empty has no entry for genesis to break. What that window buys an operator
   is bounded by the proof check — a licensed row is still read, and a row
   nobody signed is still a finding
-- Verification does not independently validate transition adjacency: it checks
-  each receipt against the chain's *last* entry for it, not that the states in
-  between followed one another legally. Every ordinary write passes through
-  `assert_transition`, and a database-only attacker cannot add an entry without
-  the enforcer key, so this is reachable only by a compromised signer or a
-  writer bug — outside the stated threat model, and named here rather than
-  left as an unstated assumption. Raised by review
 - The request hash binds what the gateway sent, not what the upstream received
 - Routes and operations are configured in code, not from a file or admin API;
   the HTTP gateway therefore takes its enforcer signer as a constructor

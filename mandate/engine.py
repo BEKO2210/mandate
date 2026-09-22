@@ -182,9 +182,49 @@ class Engine:
         with self.ledger.tx() as tx:
             return tx.chain_head(tenant)
 
+    def anchor_chain(self, tenant: str = DEFAULT_TENANT) -> dict | None:
+        """A head, stamped, in a form that can be written down elsewhere.
+
+        `chain_head` hands out the same value; this exists so that keeping one
+        is a thing the tool does rather than advice in a document. An anchor
+        nobody stores is worth exactly as much as no anchor.
+        """
+        head = self.chain_head(tenant)
+        if not head:
+            return None
+        return {
+            "tenant": tenant,
+            "seq": head["seq"],
+            "entry_hash": head["entry_hash"],
+            "anchored_at": iso(self._now()),
+        }
+
+    def rotate_signer(self, new_signer: str, tenant: str = DEFAULT_TENANT) -> dict:
+        """Hand signing authority to another key, signed by the one leaving.
+
+        Until now a chain was pinned to one key for life: rotating broke
+        verification, so the practical advice was never to rotate, which makes
+        a single compromise unbounded in time. The rotation entry is signed by
+        the *outgoing* key, so whoever steals the current one still cannot
+        rewrite anything that happened before they got it.
+        """
+        with self.ledger.tx() as tx:
+            head = tx.chain_head(tenant)
+            if not head:
+                raise MandateError(
+                    "a chain with no entries has no signer to rotate away from"
+                )
+            entry = chainlib.rotation_body(
+                seq=head["seq"] + 1, tenant=tenant, prev=head["entry_hash"],
+                new_signer=new_signer, recorded_at=iso(self._now()),
+            )
+            signed = chainlib.sign_entry(self.enforcer, entry)
+            tx.append_chain(signed)
+        return signed
+
     def verify_chain(
         self, tenant: str = DEFAULT_TENANT, expect_head: str | None = None,
-        expect_signer: str | None = None,
+        expect_signer: str | None = None, anchors: list[dict] | None = None,
     ) -> chainlib.ChainReport:
         """Walk the chain and compare it against the receipts it commits to.
 
@@ -200,6 +240,7 @@ class Engine:
         return chainlib.verify_chain(
             entries, tenant, signer_did=expect_signer, expect_head=expect_head,
             stored=stored, unchained_receipts=unchained, legacy_receipts=legacy,
+            anchors=anchors,
         )
 
     def _day(self) -> str:
