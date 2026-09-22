@@ -96,6 +96,21 @@ def main(argv: list[str] | None = None) -> int:
     ch_rotate.add_argument("--config", required=True, help="An MCP guard configuration file")
     ch_rotate.add_argument("--to", required=True, help="The did:key taking over")
 
+    gw = sub.add_parser("gateway", help="Run the HTTP enforcement gateway from a configuration file")
+    gw_sub = gw.add_subparsers(dest="gateway_cmd", required=True)
+    gw_check = gw_sub.add_parser(
+        "check", help="Validate the configuration and prove the enforcer can sign"
+    )
+    gw_check.add_argument("--config", required=True)
+    gw_serve = gw_sub.add_parser("serve", help="Serve the gateway")
+    gw_serve.add_argument("--config", required=True)
+    gw_serve.add_argument("--host", default="127.0.0.1")
+    gw_serve.add_argument("--port", type=int, default=8080)
+    gw_serve.add_argument(
+        "--workers", type=int, default=1,
+        help="Worker processes. They share one ledger, and so one rate limit per key.",
+    )
+
     signer = sub.add_parser("signer", help="Inspect the keys Mandate signs with")
     signer_sub = signer.add_subparsers(dest="signer_cmd", required=True)
     check = signer_sub.add_parser(
@@ -123,6 +138,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.cmd == "signer":
         return _signer(args)
+
+    if args.cmd == "gateway":
+        return _gateway(args)
 
     if args.cmd == "chain":
         return _chain(args)
@@ -154,6 +172,10 @@ def _mcp(args) -> int:
             print(f"agent key : {config.agent_signer.get('kind')} — not written here")
         else:
             print(f"agent key : {config.store_path / 'keys' / 'agent.key'} (development key)")
+        if config.principal_signer:
+            print(f"principal key: {config.principal_signer.get('kind')} — not written here")
+        else:
+            print(f"principal key: {config.store_path / 'keys' / 'principal.key'} (development key)")
         print(f"keys in   : {config.store_path / 'keys'} (keep them private)")
         return 0
 
@@ -310,6 +332,69 @@ def _chain(args) -> int:
     return 2
 
 
+def _gateway(args) -> int:
+    from .gateway_config import GatewayConfigError, load_gateway_config
+    from .signing import SigningError
+
+    try:
+        config = load_gateway_config(args.config)
+    except (GatewayConfigError, OSError) as exc:
+        print(f"configuration: INVALID — {exc}", file=sys.stderr)
+        return 1
+
+    if args.gateway_cmd == "check":
+        failed = False
+        print(f"store     : {config.store}")
+        for route in config.routes:
+            ops = ", ".join(op.action for op in route.operations) or "no operations"
+            print(f"route     : {route.tenant}/{route.audience} -> {route.base_url} "
+                  f"[{route.network_policy}] ({ops})")
+        if config.auth == "open":
+            print(f"auth      : OPEN — no authentication, every caller is tenant {config.open_tenant}")
+        else:
+            print("auth      : api keys (mandate keys new --db "
+                  f"{config.ledger_path} --tenant … --name …)")
+        print(f"rate limit: {config.per_minute}/min per key, burst "
+              f"{config.burst or config.per_minute}, shared by all workers")
+        print(f"upstream  : TLS verified against {config.ca_bundle or 'the system trust store'}")
+        if config.ca_bundle and not Path(config.ca_bundle).is_file():
+            print(f"{'':10}  UNUSABLE — {config.ca_bundle} does not exist")
+            failed = True
+        try:
+            signer = config.build_enforcer_signer()
+            if signer is None:
+                print(f"enforcer  : local development key in {config.store / 'enforcer-keys'}")
+            else:
+                report = signer.check()
+                held = "held by this process" if report["signer"] == "file" else "held elsewhere"
+                print(f"enforcer  : {report['signer']} ok, {held}")
+                print(f"{'':10}  {report['did']}")
+        except SigningError as exc:
+            print(f"enforcer  : UNUSABLE — {exc}")
+            failed = True
+        return 1 if failed else 0
+
+    if args.gateway_cmd == "serve":
+        import os
+
+        import uvicorn
+
+        from .gateway_config import ENV_VAR
+
+        if args.workers < 1:
+            print("--workers must be at least 1", file=sys.stderr)
+            return 2
+        # Every worker builds its app from the same file, so a factory rather
+        # than an app object: an object cannot be handed to other processes.
+        os.environ[ENV_VAR] = str(Path(args.config).resolve())
+        uvicorn.run(
+            "mandate.gateway_config:app_from_env", factory=True,
+            host=args.host, port=args.port, workers=args.workers,
+        )
+        return 0
+    return 2
+
+
 def _signer(args) -> int:
     """Answer one question: can this configuration actually sign, and as whom?
 
@@ -328,6 +413,7 @@ def _signer(args) -> int:
     for label, build in (
         ("agent", lambda: load_agent_signer(config)),
         ("enforcer", config.build_enforcer_signer),
+        ("principal", config.build_principal_signer),
     ):
         try:
             signer = build()
@@ -347,9 +433,10 @@ def _signer(args) -> int:
         held = "held by this process" if report["signer"] == "file" else "held elsewhere"
         print(f"{label:<9}: {report['signer']} ok, {held}")
         print(f"{'':9}  {report['did']}")
-        expected = state.get("agent_did") if label == "agent" else None
+        expected = state.get(f"{label}_did") if label in {"agent", "principal"} else None
         if expected and expected != report["did"]:
-            print(f"{'':9}  MISMATCH — the grant was issued to {expected}")
+            role = "issued to" if label == "agent" else "issued by"
+            print(f"{'':9}  MISMATCH — the grant was {role} {expected}")
             failed = True
 
     return 1 if failed else 0

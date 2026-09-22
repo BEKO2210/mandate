@@ -167,6 +167,23 @@ answer once processes share the file.
 
 Covered by G202–G211.
 
+## SH-11 — A security boundary must be configurable without code — DONE in v0.9.0
+
+The HTTP gateway could only be assembled in Python. `mandate gateway check`
+and `mandate gateway serve` now run it from one JSON file: routes,
+operations, enforcer signer, authentication, rate limit and CA bundle. The
+file is read strictly, and so is the MCP guard's, which used to ignore
+unknown keys — a misspelt `max_daily_amount` was dropped and the grant issued
+with no daily limit. `principal_signer` keeps the grant-issuing key in a key
+manager.
+
+Reading the executor for this found a path bug: connecting to the pinned
+address rebuilt the URL from the operation's path alone, so a `base_url` of
+`https://api.example/v2` sent `/v2/orders` to `/orders`. The receipt named
+one path and the upstream was asked for another.
+
+Covered by G212–G219.
+
 ## Residual / next
 
 - A chain cannot prove what was removed from its own end; truncation is only
@@ -184,12 +201,10 @@ Covered by G202–G211.
   is bounded by the proof check — a licensed row is still read, and a row
   nobody signed is still a finding
 - The request hash binds what the gateway sent, not what the upstream received
-- Routes and operations are configured in code, not from a file or admin API;
-  the HTTP gateway therefore takes its enforcer signer as a constructor
-  argument rather than from configuration
 - A key manager does not bound a live compromise of the signing process
 - AWS KMS caps a signed message at 4096 bytes, which a receipt with a large
   context exceeds; the signer refuses rather than falling back to a digest,
   because the digest variant would not verify as `did:key`
-- The principal key that issues grants is local by default
+- Without `principal_signer`, `mcp init` writes the grant-issuing key to the
+  store as a development file; that is a default an operator has to change
 - Reconciling an EXECUTION_UNKNOWN reservation is still a manual decision

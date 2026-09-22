@@ -82,6 +82,7 @@ class _Recorder(http.server.BaseHTTPRequestHandler):
         length = int(self.headers.get("Content-Length") or 0)
         self.rfile.read(length)
         self.server.hits.append(self.headers.get("Host"))
+        self.server.paths.append(self.path)
         self.send_response(200)
         self.end_headers()
         self.wfile.write(b"{}")
@@ -93,7 +94,7 @@ class _Recorder(http.server.BaseHTTPRequestHandler):
 def serve_tls(ip: str, port: int, directory: pathlib.Path, name: str = HOST):
     """An HTTPS server on ip:port presenting the leaf issued for `name`."""
     server = http.server.HTTPServer((ip, port), _Recorder)
-    server.hits = []
+    server.hits, server.paths = [], []
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     context.load_cert_chain(directory / f"{name}.pem", directory / f"{name}.key")
     server.socket = context.wrap_socket(server.socket, server_side=True)

@@ -131,9 +131,10 @@ will not verify later. A signer that cannot sign refuses the call outright:
 the operator's log, not the model, because a refusal is tool output and a
 signing error can name hosts and paths.
 
-The principal key is still local by default. Issuing and revoking grants is an
-operator action, so the private key that does it does not belong to a serving
-process at all — put it in a key manager too, or keep it off the host entirely.
+The principal key is a local development file unless `principal_signer` names
+a key manager. Issuing and revoking grants is an operator action, so the
+private key that does it does not belong to a serving process at all — with
+`principal_signer` it is used by `mcp init` and never exists on the host.
 
 ## The operator
 

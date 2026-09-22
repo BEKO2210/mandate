@@ -39,6 +39,12 @@ to respect.
 }
 ```
 
+The file is read strictly. An unknown key, at any level, is an error rather
+than something to skip: a misspelt `max_daily_amount` used to be dropped
+silently and the grant issued with no daily limit. Duplicate keys are refused
+for the same reason — which of the two wins is not a question a security
+configuration should leave to a JSON parser.
+
 `tools` is the whole surface. **A tool that is not mapped is not exposed**, so
 the model cannot call what the configuration never considered. Set
 `allow_unmapped` if you want the opposite, and know what you are choosing.

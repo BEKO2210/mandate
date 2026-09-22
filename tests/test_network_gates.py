@@ -1,4 +1,4 @@
-"""Network-boundary gates G202-G206.
+"""Network-boundary gates G202-G206 and G212.
 
 The destination policy decides which address an authorized request may
 reach. These gates attack the gap between that decision and the socket:
@@ -27,9 +27,9 @@ from tests.tls_fixtures import (
 )
 
 
-def _route(port: int, timeout: float = 3.0) -> Route:
+def _route(port: int, timeout: float = 3.0, prefix: str = "") -> Route:
     return Route(
-        audience="mandate://t", base_url=f"https://{HOST}:{port}",
+        audience="mandate://t", base_url=f"https://{HOST}:{port}{prefix}",
         allowed_methods=("POST",), allowed_paths=("/do",),
         network_policy="allow_private", timeout=timeout,
     )
@@ -186,3 +186,15 @@ def test_g206_plain_http_is_pinned_too(tmp_path, monkeypatch):
     assert resolver.calls == 1
     assert len(servers["127.0.0.2"].hits) == 1
     assert servers["127.0.0.1"].hits == []
+
+
+def test_g212_a_base_url_path_prefix_is_not_dropped(two_peers):
+    """Connecting to the pinned address rebuilt the URL from the operation's
+    path alone, so `https://api.example/v2` + `/do` was sent to `/do`. The
+    receipt named `/v2/do`; the upstream was asked for something else. On
+    main this affected every HTTP route with a prefix."""
+    result = UpstreamExecutor(verify=str(two_peers["ca"])).forward(
+        _route(two_peers["port"], prefix="/v2"), "POST", "/do", b"{}", "idem-g212",
+    )
+    assert result.state == "EXECUTED", (result.state, result.error)
+    assert two_peers["approved"].paths == ["/v2/do"]

@@ -173,7 +173,7 @@ The receipt binds the request body the gateway *committed to sending*. It does n
 
 On timeout or an unknown executor error the state is `EXECUTION_UNKNOWN` and the reservation is kept. Reconciling it is a human decision.
 
-A key manager does not bound a live compromise: code inside the signing process can ask it for signatures for as long as it is there. The principal key that issues grants is local by default.
+A key manager does not bound a live compromise: code inside the signing process can ask it for signatures for as long as it is there. Without `principal_signer`, the key that issues grants is a local development file.
 
 The receipt chain makes edited history detectable, not impossible. Truncation from the end of a chain is invisible unless a head was kept elsewhere, and a compromised enforcer key can re-sign receipts and chain together.
 

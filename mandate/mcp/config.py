@@ -63,12 +63,18 @@ class GuardConfig:
     # and then the guard signs without ever holding the key.
     agent_signer: dict[str, Any] | None = None
     enforcer_signer: dict[str, Any] | None = None
+    # The key that issues the grant. Absent, `mcp init` writes it to the store
+    # as a file; with a block it stays in the key manager.
+    principal_signer: dict[str, Any] | None = None
 
     def build_agent_signer(self) -> Signer | None:
         return signer_from_config(self.agent_signer) if self.agent_signer else None
 
     def build_enforcer_signer(self) -> Signer | None:
         return signer_from_config(self.enforcer_signer) if self.enforcer_signer else None
+
+    def build_principal_signer(self) -> Signer | None:
+        return signer_from_config(self.principal_signer) if self.principal_signer else None
 
     @property
     def holds_agent_key(self) -> bool:
@@ -88,12 +94,47 @@ class GuardConfig:
         return sorted({rule.action for rule in self.mapping.rules.values()})
 
 
+# Every key this file may contain. Anything else is refused rather than
+# ignored: a misspelt `max_daily_amount` used to be dropped without a word,
+# and the grant was issued with no daily limit at all.
+_TOP = {"audience", "upstream", "tools", "allow_unmapped", "grant", "tenant", "store",
+        "timeout", "server_name", "agent_signer", "enforcer_signer", "principal_signer"}
+_UPSTREAM = {"command", "args", "env", "cwd"}
+_GRANT = {"organization", "purpose", "days", "constraints"}
+_CONSTRAINTS = {"currency", "max_amount", "max_daily_amount", "require_human_above",
+                "counterparties_allow", "counterparties_deny"}
+
+
+def _no_duplicates(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    out: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in out:
+            raise MappingError(f"duplicate key {key!r}")
+        out[key] = value
+    return out
+
+
+def _known(block: Any, allowed: set[str], where: str) -> None:
+    if not isinstance(block, dict):
+        raise MappingError(f"{where} must be an object")
+    unknown = set(block) - allowed
+    if unknown:
+        raise MappingError(f"{where} has unknown keys {sorted(unknown)}")
+
+
 def load_config(path: str | Path) -> GuardConfig:
-    raw = json.loads(Path(path).read_text(encoding="utf-8"))
+    raw = json.loads(Path(path).read_text(encoding="utf-8"), object_pairs_hook=_no_duplicates)
     return parse_config(raw)
 
 
 def parse_config(raw: dict[str, Any]) -> GuardConfig:
+    _known(raw, _TOP, "configuration")
+    if isinstance(raw.get("upstream"), dict):
+        _known(raw["upstream"], _UPSTREAM, "upstream")
+    if raw.get("grant") is not None:
+        _known(raw["grant"], _GRANT, "grant")
+        if raw["grant"].get("constraints") is not None:
+            _known(raw["grant"]["constraints"], _CONSTRAINTS, "grant.constraints")
     try:
         upstream_raw = raw["upstream"]
         upstream = UpstreamConfig(
@@ -137,7 +178,7 @@ def parse_config(raw: dict[str, Any]) -> GuardConfig:
         constraints=dict(grant_raw.get("constraints") or {}),
     )
 
-    for name in ("agent_signer", "enforcer_signer"):
+    for name in ("agent_signer", "enforcer_signer", "principal_signer"):
         block = raw.get(name)
         if block is not None and not isinstance(block, dict):
             raise MappingError(f"{name} must be an object naming a signer kind")
@@ -155,6 +196,7 @@ def parse_config(raw: dict[str, Any]) -> GuardConfig:
         server_name=raw.get("server_name", "mandate_guard"),
         agent_signer=raw.get("agent_signer"),
         enforcer_signer=raw.get("enforcer_signer"),
+        principal_signer=raw.get("principal_signer"),
     )
 
 

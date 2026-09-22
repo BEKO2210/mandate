@@ -81,12 +81,14 @@ def bootstrap(config: GuardConfig, engine: Engine) -> dict[str, str]:
     Without an `agent_signer` this is a development convenience: both private
     keys are written to the store as plain files. With one, the agent key is
     never generated here and never written anywhere — the key manager already
-    holds it, and this only records the DID it publishes.
+    holds it, and this only records the DID it publishes. `principal_signer`
+    does the same for the key that issues the grant.
     """
     keys = config.store_path / "keys"
     keys.mkdir(parents=True, exist_ok=True)
+    principal_signer = config.build_principal_signer()
     principal, principal_kp = engine.register_principal(
-        config.grant.organization, kind="org", tenant=config.tenant
+        config.grant.organization, kind="org", tenant=config.tenant, signer=principal_signer
     )
     agent_signer = config.build_agent_signer()
     agent, agent_kp = engine.register_agent(
@@ -108,7 +110,8 @@ def bootstrap(config: GuardConfig, engine: Engine) -> dict[str, str]:
         constraints=config.grant.to_constraint(),
         tenant=config.tenant,
     )
-    _write_key(keys / "principal.key", principal_kp)
+    if principal_signer is None:
+        _write_key(keys / "principal.key", principal_kp)
     if agent_signer is None:
         _write_key(keys / "agent.key", agent_kp)
     state = {

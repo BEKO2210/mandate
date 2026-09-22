@@ -31,6 +31,53 @@ them afterwards.
 `create_app()` requires an authenticator. For single-tenant development pass
 `auth=OpenAccess()` explicitly.
 
+## Run from a configuration file
+
+```json
+{
+  "store": "/var/lib/mandate",
+  "enforcer_signer": {"kind": "vault-transit", "key": "mandate-enforcer"},
+  "rate_limit": {"per_minute": 120, "burst": 20},
+  "routes": [{
+    "audience": "mandate://procurement",
+    "base_url": "https://erp.example.com/api/v2",
+    "allowed_methods": ["POST"],
+    "allowed_paths": ["/orders"],
+    "operations": [{
+      "action": "purchase.office", "method": "POST", "path": "/orders",
+      "fields": ["action", "amount", "currency", "execution_id"]
+    }]
+  }]
+}
+```
+
+```
+mandate gateway check --config gateway.json
+mandate gateway serve --config gateway.json --port 8080 --workers 4
+mandate keys new --db /var/lib/mandate/mandate.sqlite --tenant acme --name ci
+```
+
+`check` validates the file, proves the enforcer signer can sign and reports
+where each key lives; it exits non-zero on anything it cannot vouch for. Run
+it before `serve`, not after the first refused intent.
+
+The file is read strictly: an unknown key at any level, a duplicate key, a
+wrong type or an out-of-range value is an error that names its location. A
+misspelt `enforcer_signer` that fell back to a generated local key would be a
+configuration bug that *works*, which is the worst kind.
+
+- `auth` defaults to API keys. `{"kind": "open", "tenant": "…"}` turns
+  authentication off and is reported as such by `check`.
+- `enforcer_signer` absent means a development key under `store`.
+- `ca_bundle` names a CA file for upstreams behind a private CA. Certificate
+  verification cannot be switched off.
+- `base_url` may carry a path prefix; it may not carry credentials, a query or
+  a fragment.
+- Relative paths are relative to the configuration file.
+
+Workers share the ledger, and with it the rate limit per key. Each worker
+builds its app from the same file (`MANDATE_GATEWAY_CONFIG`, set by `serve`).
+
     GET /v1/info -> enforcer DID, version and the calling tenant
 
 Routes declare operations per signed action. The agent supplies values; the

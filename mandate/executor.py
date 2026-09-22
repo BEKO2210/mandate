@@ -209,7 +209,11 @@ class UpstreamExecutor:
             port = parsed.port or default
             ip = pinned[0]
             ip_lit = f"[{ip}]" if ":" in ip and not ip.startswith("[") else ip
-            connect_url = f"{parsed.scheme}://{ip_lit}:{port}{path}"
+            # The whole path of the checked URL, not just the operation's: a
+            # base_url of https://api.example/v2 used to lose its /v2 here,
+            # so the request went to a path the receipt never named.
+            target = parsed.path + (f"?{parsed.query}" if parsed.query else "")
+            connect_url = f"{parsed.scheme}://{ip_lit}:{port}{target}"
             headers["Host"] = host if not parsed.port else f"{host}:{parsed.port}"
             if parsed.scheme == "https":
                 extensions["sni_hostname"] = host

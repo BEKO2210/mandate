@@ -43,12 +43,11 @@ and `docs/SECURITY_BACKLOG.md`:
 - `EXECUTION_UNKNOWN` holds its reservation until a human reconciles it
 - The receipt binds the body the gateway committed to sending, not proof of
   upstream receipt
-- Routes and operations are configured in code, not from a file or admin API
 - The MCP guard is the enforcement boundary; code running inside it can make
   it sign, whether the key is a local file or in a key manager. A key manager
   removes the durable secret and revokes signing, not the ability of resident
   code to ask for a signature while it is resident
-- The principal key that issues grants is local by default
+- Without `principal_signer`, the key that issues grants is a local development file
 
 ## Supported versions
 
