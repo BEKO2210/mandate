@@ -1,14 +1,56 @@
-# Mandate v0.7.0
+# Mandate v0.8.0
 
 Enforcement gateway for AI-agent grants.
 
 An agent cannot call a protected upstream unless the gateway has a currently valid principal authorization — and cannot reach the gateway at all without a key.
 
-## What v0.7.0 adds
+## What v0.8.0 adds
+
+The three risks the last releases carried as documented residuals. One was
+solvable; the other two are properties rather than bugs — a prefix of a valid
+chain is a valid chain, and a stolen key signs whatever it likes — so they get
+a mechanism that bounds them instead of a paragraph that admits them.
+
+**Anchors, because nothing inside a database can speak for what was cut off
+its end.**
+
+```bash
+$ mandate chain anchor --db .mandate/mandate.sqlite --file /mnt/witness/anchors.jsonl
+default: seq 12 sha256:f4c5847b…
+
+# later, after the last entries and their receipts quietly disappear
+$ mandate chain verify --db … --anchors /mnt/witness/anchors.jsonl
+tenant default: TAMPERED — an anchor recorded seq 12 for this tenant, and
+                the chain no longer reaches it
+$ echo $?
+1
+```
+
+Without it the same database reports `9 entries intact` and exits 0. An anchor
+stored on the same disk under the same operator buys nothing; where it goes is
+the deployment's decision, and now the tool at least writes it.
+
+**Key rotation, signed by the key being replaced.** A chain used to be pinned
+to one key for life — rotating broke verification, so the practical advice was
+never to, which makes one compromise unbounded in time.
+
+```bash
+mandate chain rotate --db … --config guard.toml --to did:key:z6Mku1qK…
+```
+
+A thief holding the current key cannot appoint themselves, and cannot rewrite
+anything from before the rotation that handed them nothing.
+
+**The road, not just the destination.** Verification checks that the states a
+receipt passed through are a sequence the state machine allows, so a history
+that skips authorization or runs backwards is a finding even when signed.
+
+## What v0.7.0 established
 
 **History that cannot be edited without showing it.** Every receipt state
 appends an enforcer-signed entry to a per-tenant hash chain, and verification
-walks the chain *and* reconciles it against the receipts it commits to.
+walks the chain *and* reconciles it against the receipts it commits to — then
+asks every receipt for its own proof.
 
 ```bash
 $ mandate chain verify --db .mandate/mandate.sqlite
@@ -18,15 +60,10 @@ $ echo $?
 1
 ```
 
-Deleting a row, rolling a state back, editing a body or inserting a receipt are
-all caught. Verification needs **no key and no running gateway**, because the
-person who most needs to check a chain is the one who does not trust whoever
-runs it.
-
-What it cannot do: prove what was deleted from the *end* of a chain. A prefix
-of a valid chain is a valid chain. `mandate chain head` and `/v1/info` hand out
-a head to keep elsewhere, and `--expect-head` checks against it. See
-[docs/CHAIN.md](docs/CHAIN.md).
+Deleting a row, rolling a state back, editing a body, inserting a receipt or
+fabricating one outright are all caught. Verification needs **no key and no
+running gateway**, because the person who most needs to check a chain is the
+one who does not trust whoever runs it. See [docs/CHAIN.md](docs/CHAIN.md).
 
 ## What v0.6.0 established
 

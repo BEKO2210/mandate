@@ -10,3 +10,6 @@ dist/
 *.sqlite-*
 enforcer-keys/
 .env
+node_modules/
+package-lock.json
+package.json
