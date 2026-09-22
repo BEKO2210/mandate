@@ -161,6 +161,13 @@ Covered by G158-G180.
   empty has no entry for genesis to break. What that window buys an operator
   is bounded by the proof check — a licensed row is still read, and a row
   nobody signed is still a finding
+- Verification does not independently validate transition adjacency: it checks
+  each receipt against the chain's *last* entry for it, not that the states in
+  between followed one another legally. Every ordinary write passes through
+  `assert_transition`, and a database-only attacker cannot add an entry without
+  the enforcer key, so this is reachable only by a compromised signer or a
+  writer bug — outside the stated threat model, and named here rather than
+  left as an unstated assumption. Raised by review
 - The request hash binds what the gateway sent, not what the upstream received
 - Routes and operations are configured in code, not from a file or admin API;
   the HTTP gateway therefore takes its enforcer signer as a constructor
