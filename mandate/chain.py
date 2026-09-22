@@ -55,7 +55,11 @@ class ChainError(Exception):
     """The chain does not say what it claims to say."""
 
 
-class DuplicateMember(ValueError):
+class UnusableBody(ValueError):
+    """The stored JSON cannot be treated as a document at all."""
+
+
+class DuplicateMember(UnusableBody):
     """The stored JSON has the same key twice."""
 
 
@@ -68,16 +72,43 @@ def _reject_duplicates(pairs):
     return dict(pairs)
 
 
-def loads_strict(raw: str) -> Any:
-    """Parse a stored body, refusing duplicate members.
+def _reject_constant(name: str):
+    # NaN and Infinity are Python's extensions to JSON, not JSON. A body
+    # carrying one canonicalises to bytes no conforming parser will read back.
+    raise UnusableBody(f"{name} is not a JSON value")
 
-    `json.loads` keeps the last of a repeated key, so an operator can prepend
-    `"outcome": "DENIED"` to a receipt and leave the canonical hash unchanged
-    while the stored bytes now read differently to any parser that keeps the
-    first. The bytes on disk are what an auditor is handed, so a document that
-    two parsers disagree about is already tampered with.
+
+def loads_strict(raw: str) -> Any:
+    """Parse a stored body, refusing anything an auditor could not read back.
+
+    Three refusals, each of them a way to change the bytes on disk without
+    changing what the canonical hash commits to:
+
+    **Duplicate members.** `json.loads` keeps the last of a repeated key, so an
+    operator can prepend `"outcome": "DENIED"` to a receipt and leave the hash
+    unchanged while the stored bytes read differently to any parser that keeps
+    the first.
+
+    **Unpaired surrogates.** `"\ud800"` is a legal JSON escape and an illegal
+    Unicode string. It parses, and then `canonical_json` raises
+    `UnicodeEncodeError` on the way out — which crashed the verifier mid-run
+    and took the whole report with it, including findings about *other*
+    receipts. Refusing it here turns a blinded verifier into a named finding.
+
+    **NaN and Infinity.** Python accepts them; JSON does not.
+
+    The bytes on disk are what an auditor is handed, so a document two parsers
+    disagree about is already tampered with.
     """
-    return json.loads(raw, object_pairs_hook=_reject_duplicates)
+    value = json.loads(raw, object_pairs_hook=_reject_duplicates,
+                       parse_constant=_reject_constant)
+    try:
+        # The same encode `body_hash` will do, done here where it can be
+        # reported rather than there where it cannot.
+        canonical_json(value)
+    except UnicodeEncodeError as exc:
+        raise UnusableBody(f"text that is not valid Unicode ({exc})") from exc
+    return value
 
 
 def genesis(tenant: str, legacy_receipts: int = 0) -> str:

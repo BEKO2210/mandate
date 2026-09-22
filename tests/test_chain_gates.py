@@ -1,4 +1,4 @@
-"""v0.7.0 receipt-chain gates G158-G183.
+"""v0.7.0 receipt-chain gates G158-G185.
 
 Signatures proved who wrote each receipt. They proved nothing about the set of
 receipts: an operator with database access could delete a row, roll a state
@@ -623,3 +623,51 @@ def test_g183_a_real_receipt_never_trips_the_proof_check(tmp_path):
         assert engine.verify_chain("default").ok
     finally:
         engine.ledger.close()
+
+
+def test_g184_a_poisoned_receipt_costs_one_finding_not_the_run(tmp_path):
+    """`"\\ud800"` is a legal JSON escape and an illegal Unicode string.
+
+    It parsed, and then canonicalisation raised on the way out — after the
+    error boundary. The verifier died mid-run with an empty report, so one
+    poisoned field blinded it to every *other* receipt as well. That is worse
+    than the edit it hides: a crash is a verifier that says nothing.
+    """
+    import re
+
+    engine, db, ids, _ = _world(tmp_path, calls=3)
+    engine.ledger.close()
+
+    con = sqlite3.connect(db)
+    con.row_factory = sqlite3.Row
+    raw = con.execute("SELECT body FROM receipts WHERE id=?", (ids[0],)).fetchone()["body"]
+    con.close()
+    poisoned = re.sub(r'"summary":\s*"[^"]*"', r'"summary":"\\ud800"', raw, count=1)
+    assert poisoned != raw, "the fixture must contain the field this attacks"
+    _sql(db, "UPDATE receipts SET body=? WHERE id=?", poisoned, ids[0])
+    # A second, ordinary tampering that the crash used to hide.
+    _sql(db, "UPDATE receipts SET state='DENIED' WHERE id=?", ids[1])
+
+    engine = Engine(ledger=Ledger(db))
+    try:
+        report = engine.verify_chain("default")
+    finally:
+        engine.ledger.close()
+    assert not report.ok
+    assert any("not valid Unicode" in m for m in report.mismatches), report.mismatches
+    assert any("DENIED" in m for m in report.mismatches), (
+        "the poisoned row must not cost the findings about the others"
+    )
+
+
+def test_g185_json_that_no_conforming_parser_reads_back_is_refused():
+    """NaN and Infinity are Python's extensions to JSON, not JSON."""
+    for raw in ('{"n": NaN}', '{"n": Infinity}', '{"n": -Infinity}'):
+        with pytest.raises(chainlib.UnusableBody):
+            chainlib.loads_strict(raw)
+    with pytest.raises(chainlib.UnusableBody):
+        chainlib.loads_strict('{"text": "\\ud800"}')
+    with pytest.raises(chainlib.UnusableBody):
+        chainlib.loads_strict('{"outer": {"text": "\\udc00"}}')
+    # A paired surrogate is an ordinary character and must still be readable.
+    assert chainlib.loads_strict('{"text": "\\ud83d\\ude00"}') == {"text": "\U0001f600"}

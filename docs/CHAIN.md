@@ -54,6 +54,7 @@ by reading the code. Gates G165–G168 exist because of it.
 | Raise the legacy baseline in `meta` | genesis, which binds it |
 | Insert a receipt into a tenant that has no chain | the verifier enumerates tenants from the receipts as well as the chain |
 | Fabricate a receipt outright | its own proof, which no count can licence |
+| Poison a field with an unpaired surrogate | the strict parser — it used to crash the verifier mid-run and take the whole report with it |
 
 ## Verify
 

@@ -73,6 +73,14 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   genesis cannot close — stood unexamined and the verifier exited 0.
   Reconciliation now verifies every receipt's proof against the key that proof
   names, chained or not, which needs no secret. Gates G182, G183.
+- **One poisoned receipt silenced the whole verifier.** `"\ud800"` is a legal
+  JSON escape and an illegal Unicode string: it parsed, then canonicalisation
+  raised `UnicodeEncodeError` on the way out, past the error boundary. The run
+  died with an empty report, so a single field hid every finding about every
+  other receipt. Stored bodies are refused if they carry an unpaired surrogate
+  or a non-JSON constant, and hashing and the proof check now sit inside the
+  boundary: one poisoned row costs one finding, never the run. Gates G184,
+  G185.
 
 ### Still open
 

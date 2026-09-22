@@ -755,17 +755,23 @@ class _Tx:
         ):
             try:
                 body = loads_strict(row["body"])
+                digest = {
+                    "state": row["state"],
+                    "body_hash": chain_body_hash(body),
+                    "proof_ok": verify_object(body) if isinstance(body, dict) else False,
+                }
             except (ValueError, TypeError) as exc:
                 # Reported, not raised: a verifier has to survive bad rows and
-                # name them, not stop at the first one.
+                # name them, not stop at the first one. The hashing and the
+                # proof check sit inside the boundary rather than after it —
+                # an unpaired surrogate raised on the way *out* of parsing and
+                # took the entire report with it, findings about other
+                # receipts included. One poisoned row must cost one finding,
+                # never the run.
                 out[row["id"]] = {"state": row["state"], "body_hash": None,
                                   "error": f"stored JSON is unusable ({exc})"}
                 continue
-            out[row["id"]] = {
-                "state": row["state"],
-                "body_hash": chain_body_hash(body),
-                "proof_ok": verify_object(body) if isinstance(body, dict) else False,
-            }
+            out[row["id"]] = digest
         return out
 
     def legacy_receipts(self, tenant: str) -> int:
