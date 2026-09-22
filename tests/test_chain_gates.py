@@ -1,4 +1,4 @@
-"""v0.7.0 receipt-chain gates G158-G176.
+"""v0.7.0 receipt-chain gates G158-G180.
 
 Signatures proved who wrote each receipt. They proved nothing about the set of
 receipts: an operator with database access could delete a row, roll a state
@@ -421,3 +421,110 @@ def test_g176_balancing_the_receipt_count_does_not_hide_a_swap(tmp_path):
     report = engine.verify_chain()
     assert not report.ok
     assert any("never recorded" in m for m in report.mismatches)
+
+
+# --- What independent review found ------------------------------------------
+
+
+def test_g177_the_legacy_baseline_cannot_be_raised_to_licence_inserts(tmp_path):
+    """The baseline that bounds unchained receipts lives in `meta`, where an
+    operator can write. Raising it by one permitted one forged receipt, with
+    no key needed — a complete bypass of G168 and of G176's tail variants.
+
+    Genesis now binds the baseline, so entry 1 stops matching the moment it
+    changes.
+    """
+    engine, db, ids, _ = _world(tmp_path, calls=3)
+    _sql(
+        db,
+        """INSERT INTO receipts(id, grant_id, agent_did, principal_did, audience, nonce,
+           action, state, body, tenant)
+           SELECT 'rcpt_forged', grant_id, agent_did, principal_did, audience, 'nonce-z',
+           action, state, body, tenant FROM receipts LIMIT 1""",
+    )
+    assert not engine.verify_chain().ok, "the insert alone is caught"
+
+    _sql(db, "INSERT OR REPLACE INTO meta(key, value) VALUES('chain_legacy', ?)",
+         json.dumps({"default": 1}))
+    report = engine.verify_chain()
+    assert not report.ok, "raising the baseline must not clear the finding"
+    assert report.broken_at == 1
+    assert "prev does not match" in (report.reason or "")
+
+
+def test_g178_genesis_binds_the_baseline_as_well_as_the_tenant():
+    assert chainlib.genesis("default", 0) != chainlib.genesis("default", 1)
+    assert chainlib.genesis("acme", 3) != chainlib.genesis("default", 3)
+
+
+def test_g179_a_duplicate_json_member_is_not_a_free_edit(tmp_path):
+    """`json.loads` keeps the last of a repeated key, so prepending
+    `"outcome": "DENIED"` changes the stored bytes while the canonical hash
+    stays put. A document two parsers disagree about is already tampered with.
+    """
+    engine, db, ids, _ = _world(tmp_path, calls=1)
+    con = sqlite3.connect(db)
+    con.row_factory = sqlite3.Row
+    raw = con.execute("SELECT body FROM receipts WHERE id=?", (ids[0],)).fetchone()["body"]
+    con.close()
+
+    doctored = '{"outcome": "DENIED", ' + raw[1:]
+    assert json.loads(doctored)["outcome"] != "DENIED", "last member wins in this parser"
+    _sql(db, "UPDATE receipts SET body=? WHERE id=?", doctored, ids[0])
+
+    report = engine.verify_chain()
+    assert not report.ok
+    assert any("duplicate member" in m for m in report.mismatches)
+
+    with pytest.raises(ValueError, match="duplicate member"):
+        chainlib.loads_strict('{"a": 1, "a": 2}')
+    with pytest.raises(ValueError, match="duplicate member"):
+        chainlib.loads_strict('{"outer": {"a": 1, "a": 2}}')
+
+
+def test_g180_concurrent_migration_cannot_inflate_the_baseline(tmp_path):
+    """Two processes could both see schema 3, one finish and write a chained
+    receipt, and the other count that receipt into the baseline."""
+    import threading
+
+    from mandate.crypto import utcnow as now
+
+    db = tmp_path / "old.sqlite"
+    engine = Engine(ledger=Ledger(db))
+    person, pkp = engine.register_principal("Belkis")
+    agent, akp = engine.register_agent("Bot", person.did, "Mandate", "t")
+    grant = engine.issue_grant(
+        person, pkp, agent, organization="A", purpose="p", scopes=["x.do"],
+        not_after=now() + timedelta(days=1),
+    )
+    for i in range(3):
+        engine.propose(akp, grant["id"], "x.do", summary=f"s{i}")
+    engine.ledger.close()
+
+    # Rewind it to a v0.6 database.
+    _sql(db, "DROP TABLE chain")
+    _sql(db, "DELETE FROM meta WHERE key IN ('chain_started_at','chain_legacy')")
+    _sql(db, "UPDATE meta SET value='3' WHERE key='schema_version'")
+
+    opened, errors = [], []
+
+    def migrate():
+        try:
+            opened.append(Ledger(db))
+        except Exception as exc:  # noqa: BLE001 - the point of the gate
+            errors.append(exc)
+
+    threads = [threading.Thread(target=migrate) for _ in range(4)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert not errors, errors
+    con = sqlite3.connect(db)
+    con.row_factory = sqlite3.Row
+    baseline = con.execute("SELECT value FROM meta WHERE key='chain_legacy'").fetchone()
+    con.close()
+    for ledger in opened:
+        ledger.close()
+    assert json.loads(baseline["value"]) == {"default": 3}, "one snapshot, taken once"

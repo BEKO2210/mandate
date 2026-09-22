@@ -36,6 +36,7 @@ module cannot make.
 from __future__ import annotations
 
 import hashlib
+import json
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -54,8 +55,47 @@ class ChainError(Exception):
     """The chain does not say what it claims to say."""
 
 
-def genesis(tenant: str) -> str:
-    return "sha256:" + hashlib.sha256(GENESIS_PREFIX + tenant.encode("utf-8")).hexdigest()
+class DuplicateMember(ValueError):
+    """The stored JSON has the same key twice."""
+
+
+def _reject_duplicates(pairs):
+    seen = set()
+    for key, _ in pairs:
+        if key in seen:
+            raise DuplicateMember(f"duplicate member {key!r}")
+        seen.add(key)
+    return dict(pairs)
+
+
+def loads_strict(raw: str) -> Any:
+    """Parse a stored body, refusing duplicate members.
+
+    `json.loads` keeps the last of a repeated key, so an operator can prepend
+    `"outcome": "DENIED"` to a receipt and leave the canonical hash unchanged
+    while the stored bytes now read differently to any parser that keeps the
+    first. The bytes on disk are what an auditor is handed, so a document that
+    two parsers disagree about is already tampered with.
+    """
+    return json.loads(raw, object_pairs_hook=_reject_duplicates)
+
+
+def genesis(tenant: str, legacy_receipts: int = 0) -> str:
+    """The value entry 1 points at.
+
+    It binds the tenant — so an entry cannot be spliced from one chain into
+    another — and the number of receipts that already existed when the chain
+    started. That second part is what stops the baseline from being edited:
+    it lives in `meta`, where an operator can write, and raising it would
+    otherwise licence exactly the unchained inserts it is meant to bound.
+    Changing it now breaks entry 1, and with it every entry after.
+
+    The baseline is therefore trusted on first use and immutable in effect
+    from the first chained write onwards. A tenant whose chain is still empty
+    has nothing to break, which is the one window where it can still be set.
+    """
+    seed = GENESIS_PREFIX + tenant.encode("utf-8") + b":" + str(int(legacy_receipts)).encode()
+    return "sha256:" + hashlib.sha256(seed).hexdigest()
 
 
 def body_hash(signed_body: dict[str, Any]) -> str:
@@ -160,6 +200,9 @@ def reconcile(
                 f"receipt {receipt_id} is stored as {row.get('state')} but the chain's "
                 f"last entry for it (seq {entry['seq']}) says {entry['outcome']}"
             )
+        if row.get("error"):
+            problems.append(f"receipt {receipt_id} cannot be read: {row['error']}")
+            continue
         if row.get("body_hash") != entry["body_hash"]:
             problems.append(
                 f"receipt {receipt_id} does not hash to what seq {entry['seq']} recorded; "
@@ -175,6 +218,7 @@ class ChainReport:
     tenant: str
     ok: bool
     length: int
+    legacy_receipts: int = 0
     signer: str | None = None
     head: str | None = None
     broken_at: int | None = None
@@ -220,7 +264,7 @@ def verify_chain(
     chain re-signed only in part. Catching one re-signed end to end needs the
     real enforcer DID, so pass it when you know it.
     """
-    prev = genesis(tenant)
+    prev = genesis(tenant, legacy_receipts)
     expect_signer = signer_did
     for index, entry in enumerate(entries, start=1):
         if expect_signer is None:
@@ -232,7 +276,7 @@ def verify_chain(
         if problem:
             return ChainReport(
                 tenant=tenant, ok=False, length=index - 1, signer=expect_signer,
-                head=prev if index > 1 else None,
+                legacy_receipts=legacy_receipts, head=prev if index > 1 else None,
                 broken_at=index, receipt_id=entry.get("receipt_id"), reason=problem,
                 unchained_receipts=unchained_receipts,
             )
@@ -240,8 +284,8 @@ def verify_chain(
 
     head = prev if entries else None
     report = ChainReport(
-        tenant=tenant, ok=True, length=len(entries), signer=expect_signer, head=head,
-        unchained_receipts=unchained_receipts,
+        tenant=tenant, ok=True, length=len(entries), signer=expect_signer,
+        legacy_receipts=legacy_receipts, head=head, unchained_receipts=unchained_receipts,
     )
     if expect_head is not None and head != expect_head:
         # The chain is internally consistent and still wrong: this is what a
@@ -268,6 +312,8 @@ def verify_chain(
         report.ok = False
     if legacy_receipts:
         report.notes.append(
-            f"{legacy_receipts} receipt(s) predate the chain and are outside it"
+            f"{legacy_receipts} receipt(s) predate the chain and are outside it "
+            f"(this baseline is bound into the chain's genesis and cannot be raised "
+            f"once the chain has an entry)"
         )
     return report

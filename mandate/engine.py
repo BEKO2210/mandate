@@ -159,7 +159,12 @@ class Engine:
         entry = chainlib.entry_body(
             seq=(head["seq"] + 1) if head else 1,
             tenant=tenant,
-            prev=head["entry_hash"] if head else chainlib.genesis(tenant),
+            # Entry 1 points at a genesis that binds the legacy baseline, so
+            # raising that baseline later breaks the chain at its first link.
+            prev=(
+                head["entry_hash"] if head
+                else chainlib.genesis(tenant, tx.legacy_receipts(tenant))
+            ),
             receipt_id=receipt_id,
             outcome=outcome,
             body_hash=chainlib.body_hash(body),

@@ -43,6 +43,24 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   it escape past callers that handle `MandateError`. Pre-existing, and made
   likelier by the second signature this release adds. Gate G175.
 
+### Fixed after independent review
+
+- **The legacy baseline was an unsigned bypass.** It bounds how many unchained
+  receipts are tolerated and lives in `meta`, where an operator can write:
+  raising it by one licensed one forged receipt, with no key needed, defeating
+  every count-based check. Genesis now binds it, so changing it breaks the
+  chain at entry 1. The baseline is trusted on first use and immutable in
+  effect from the first chained write. Gates G177, G178.
+- **A duplicate JSON member was a free edit.** `json.loads` keeps the last of a
+  repeated key, so prepending `"outcome": "DENIED"` changed the stored bytes
+  while the canonical hash stayed put — and a parser that keeps the first would
+  read a different receipt. Stored bodies are now parsed strictly. Gate G179.
+- **Schema-4 migration was not atomic.** Two processes could both see version
+  3; one could finish and write a chained receipt, and the other could count
+  that receipt into the baseline, inflating the number that bounds unchained
+  inserts. The snapshot and the version bump are one `BEGIN IMMEDIATE`
+  transaction with the version re-checked under the write lock. Gate G180.
+
 ### Still open
 
 A chain cannot prove what was removed from its own end: truncation is only

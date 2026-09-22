@@ -140,7 +140,13 @@ chain head` hand out a head to keep elsewhere, and `--expect-head` checks
 against it; where that head goes is a deployment decision. A compromised
 enforcer key still allows receipts and chain to be re-signed together.
 
-Covered by G158-G176.
+Independent review then found three ways past it, all fixed: the legacy
+baseline was an unsigned value in `meta` that an operator could raise to
+licence forged receipts; a duplicate JSON member changed a stored body without
+changing its canonical hash; and a non-atomic schema-4 migration could inflate
+the baseline under concurrency.
+
+Covered by G158-G180.
 
 ## Residual / next
 
@@ -151,6 +157,8 @@ Covered by G158-G176.
   detectable against a head kept outside the deployment
 - The chain is signed by the enforcer key; a compromise of that key allows
   history and chain to be re-signed together
+- The legacy baseline is trusted on first use: a tenant whose chain is still
+  empty has no entry for genesis to break
 - The request hash binds what the gateway sent, not what the upstream received
 - Routes and operations are configured in code, not from a file or admin API;
   the HTTP gateway therefore takes its enforcer signer as a constructor

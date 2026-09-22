@@ -13,7 +13,7 @@ before it:
 entry_hash(n) = sha256(canonical_json({seq, tenant, prev, receipt_id,
                                        outcome, body_hash, recorded_at}))
 prev(n)       = entry_hash(n-1)
-prev(1)       = sha256("mandate/chain/v1:" + tenant)
+prev(1)       = sha256("mandate/chain/v1:" + tenant + ":" + legacy_receipts)
 ```
 
 Each entry is signed by the enforcer over its own hash. Changing or removing
@@ -45,6 +45,8 @@ by reading the code. Gates G165–G168 exist because of it.
 | Replay a real entry elsewhere | a unique index on `entry_hash` |
 | Re-sign part of the chain | the walk (one signer throughout) |
 | Reformat a receipt's JSON | **nothing — and correctly so.** The hash is canonical; whitespace is not tampering |
+| Add a duplicate JSON member | the strict parser: `json.loads` keeps the last of a repeated key, so prepending one changes the stored bytes while the canonical hash stays put |
+| Raise the legacy baseline in `meta` | genesis, which binds it |
 
 ## Verify
 
@@ -128,6 +130,17 @@ tenant default: 0 entries intact, head -
 Those receipts are reported as a note, not a finding. Once the count of
 unchained receipts exceeds what was there at the upgrade, rows were written
 around the chain, and that *is* a finding.
+
+That baseline lives in `meta`, where an operator can write — so raising it by
+one would otherwise licence exactly one forged receipt, with no key needed. It
+is bound into the chain's genesis instead: entry 1 points at
+`sha256(prefix + tenant + ":" + baseline)`, so changing the baseline breaks the
+chain at its first link.
+
+The baseline is therefore **trusted on first use** and immutable in effect from
+the first chained write onwards. A tenant whose chain is still empty has
+nothing to break, which is the one window where it can still be set. Review
+found this; it was an unsigned bypass of every count-based check before.
 
 ## Shape
 

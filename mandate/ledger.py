@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from .chain import body_hash as chain_body_hash
+from .chain import loads_strict
 from .crypto import iso, utcnow
 from .money import exponent, from_minor
 from .states import InvalidTransition, assert_transition
@@ -200,17 +201,26 @@ class Ledger:
                 "INSERT OR REPLACE INTO meta(key, value) VALUES ('schema_version', '3')"
             )
         if self._schema_version() < 4:
-            # The chain starts here, empty. Seeding it from the receipts that
-            # already exist would produce a chain that looks like it covered
-            # them all along; it did not, and a verifier has to be able to say
-            # so. `chain_started_at` is what lets it.
-            self._conn.execute(
-                "INSERT OR REPLACE INTO meta(key, value) VALUES ('chain_started_at', ?)",
-                (iso(utcnow()),),
-            )
-            # How many receipts each tenant already had. A verifier compares
-            # against this: more unchained receipts than were here when the
-            # chain started means rows were written around it.
+            self._migrate_start_chain()
+
+    def _migrate_start_chain(self) -> None:
+        """Start the chain, and snapshot the receipts that predate it.
+
+        One transaction, with the version re-checked after the write lock is
+        held. Without that, two processes could both see version 3, one could
+        finish and write a chained receipt, and the other could then count that
+        receipt into the baseline — inflating the very number that bounds how
+        many unchained receipts are tolerated.
+
+        The chain starts empty. Seeding it from the receipts that already exist
+        would produce a chain that looks like it covered them all along; it did
+        not, and a verifier has to be able to say so.
+        """
+        self._conn.execute("BEGIN IMMEDIATE")
+        try:
+            if self._schema_version() >= 4:
+                self._conn.execute("ROLLBACK")
+                return
             legacy = {
                 row["tenant"]: row["n"]
                 for row in self._conn.execute(
@@ -218,12 +228,20 @@ class Ledger:
                 )
             }
             self._conn.execute(
+                "INSERT OR REPLACE INTO meta(key, value) VALUES ('chain_started_at', ?)",
+                (iso(utcnow()),),
+            )
+            self._conn.execute(
                 "INSERT OR REPLACE INTO meta(key, value) VALUES ('chain_legacy', ?)",
                 (json.dumps(legacy, sort_keys=True),),
             )
             self._conn.execute(
                 "INSERT OR REPLACE INTO meta(key, value) VALUES ('schema_version', '4')"
             )
+            self._conn.execute("COMMIT")
+        except Exception:
+            self._conn.execute("ROLLBACK")
+            raise
 
     def _migrate_add_tenancy(self) -> None:
         """Every record belongs to a tenant. Pre-0.4 rows join the default one."""
@@ -718,9 +736,17 @@ class _Tx:
         for row in self.l._conn.execute(
             "SELECT id, state, body FROM receipts WHERE tenant=?", (tenant,)
         ):
+            try:
+                body = loads_strict(row["body"])
+            except (ValueError, TypeError) as exc:
+                # Reported, not raised: a verifier has to survive bad rows and
+                # name them, not stop at the first one.
+                out[row["id"]] = {"state": row["state"], "body_hash": None,
+                                  "error": f"stored JSON is unusable ({exc})"}
+                continue
             out[row["id"]] = {
                 "state": row["state"],
-                "body_hash": chain_body_hash(json.loads(row["body"])),
+                "body_hash": chain_body_hash(body),
             }
         return out
 

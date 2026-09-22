@@ -153,6 +153,10 @@ Three limits, none of them fixable from inside the database:
 * **The signing key.** Anyone holding the enforcer key can re-sign the receipts
   and the chain together. The chain raises editing history from an UPDATE to a
   key compromise; it does not survive one.
+* **The baseline's first write.** The number of receipts predating the chain
+  bounds how many unchained ones are tolerated, and is bound into genesis so it
+  cannot be raised afterwards. Before a tenant's first chained write there is
+  no entry to break, so that one moment is trusted on first use.
 * **Per-tenant chains.** A whole tenant's history can be dropped without any
   other tenant's chain noticing — the same isolation boundary the rest of the
   system already draws.
