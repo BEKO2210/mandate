@@ -117,13 +117,57 @@ like every other post-dispatch failure.
 
 Covered by G120-G157.
 
+## SH-09 — History must not be editable without evidence — DONE in v0.7.0
+
+Every receipt was individually signed and nothing tied them together, so an
+operator with database access could delete a receipt, roll its state back, or
+insert one, and every remaining signature still verified.
+
+Each receipt state now appends an enforcer-signed entry to a per-tenant hash
+chain, in the same transaction as the write; the ledger refuses a receipt write
+that carries no entry. `mandate chain verify` walks the chain *and* reconciles
+it against the receipts it commits to, needing no key and no running gateway so
+that someone who distrusts the operator can run it.
+
+The reconciliation half was missing from the first implementation, which caught
+nothing: deleting a row left the chain perfectly self-consistent. That was
+found by performing the attack, not by review of the code, and G165-G168 are
+written as the attacks rather than as the feature.
+
+Residual, stated rather than fixed: a prefix of a valid chain is a valid chain,
+so truncation is invisible from inside the database. `/v1/info` and `mandate
+chain head` hand out a head to keep elsewhere, and `--expect-head` checks
+against it; where that head goes is a deployment decision. A compromised
+enforcer key still allows receipts and chain to be re-signed together.
+
+Independent review then found three ways past it, all fixed: the legacy
+baseline was an unsigned value in `meta` that an operator could raise to
+licence forged receipts; a duplicate JSON member changed a stored body without
+changing its canonical hash; and a non-atomic schema-4 migration could inflate
+the baseline under concurrency.
+
+Covered by G158-G180.
+
 ## Residual / next
 
 - HTTPS DNS TOCTOU (check then connect by name)
 - No connection-level IP pin for TLS
 - The rate limiter is in-process and bounds one gateway process
-- Receipts are individually signed but not chained; an operator with database
-  access can delete or roll back history
+- A chain cannot prove what was removed from its own end; truncation is only
+  detectable against a head kept outside the deployment
+- The chain is signed by the enforcer key; a compromise of that key allows
+  history and chain to be re-signed together
+- The legacy baseline is trusted on first use: a tenant whose chain is still
+  empty has no entry for genesis to break. What that window buys an operator
+  is bounded by the proof check — a licensed row is still read, and a row
+  nobody signed is still a finding
+- Verification does not independently validate transition adjacency: it checks
+  each receipt against the chain's *last* entry for it, not that the states in
+  between followed one another legally. Every ordinary write passes through
+  `assert_transition`, and a database-only attacker cannot add an entry without
+  the enforcer key, so this is reachable only by a compromised signer or a
+  writer bug — outside the stated threat model, and named here rather than
+  left as an unstated assumption. Raised by review
 - The request hash binds what the gateway sent, not what the upstream received
 - Routes and operations are configured in code, not from a file or admin API;
   the HTTP gateway therefore takes its enforcer signer as a constructor

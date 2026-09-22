@@ -54,6 +54,25 @@ def main(argv: list[str] | None = None) -> int:
     mcp_serve = mcp_sub.add_parser("serve", help="Serve the guard on stdio")
     mcp_serve.add_argument("--config", required=True)
 
+    ch = sub.add_parser("chain", help="Inspect the receipt chain")
+    ch_sub = ch.add_subparsers(dest="chain_cmd", required=True)
+    ch_verify = ch_sub.add_parser(
+        "verify", help="Walk the chain and report the first thing that does not add up"
+    )
+    ch_verify.add_argument("--db", default=str(DEFAULT_DB))
+    ch_verify.add_argument("--tenant", default=None, help="Default: every tenant")
+    ch_verify.add_argument(
+        "--expect-head",
+        default=None,
+        help="A head you kept earlier. Without one, truncation cannot be detected.",
+    )
+    ch_verify.add_argument(
+        "--expect-signer", default=None, help="The enforcer DID you expect to have signed"
+    )
+    ch_head = ch_sub.add_parser("head", help="Print the current head, to keep elsewhere")
+    ch_head.add_argument("--db", default=str(DEFAULT_DB))
+    ch_head.add_argument("--tenant", default="default")
+
     signer = sub.add_parser("signer", help="Inspect the keys Mandate signs with")
     signer_sub = signer.add_subparsers(dest="signer_cmd", required=True)
     check = signer_sub.add_parser(
@@ -81,6 +100,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.cmd == "signer":
         return _signer(args)
+
+    if args.cmd == "chain":
+        return _chain(args)
 
     return 2
 
@@ -120,6 +142,49 @@ def _mcp(args) -> int:
         anyio.run(serve, config)
         return 0
 
+    return 2
+
+
+def _chain(args) -> int:
+    """Verification has to be runnable by someone who does not trust the
+    operator, so it reads the database directly and needs no running gateway."""
+    from .engine import Engine
+
+    engine = Engine(ledger=_ledger(args.db))
+    try:
+        if args.chain_cmd == "head":
+            head = engine.chain_head(args.tenant)
+            if not head:
+                print(f"{args.tenant}: the chain is empty")
+                return 0
+            print(f"tenant : {args.tenant}")
+            print(f"seq    : {head['seq']}")
+            print(f"head   : {head['entry_hash']}")
+            print("Keep this where the operator of this database cannot reach it.")
+            return 0
+
+        if args.chain_cmd == "verify":
+            with engine.ledger.tx() as tx:
+                tenants = [args.tenant] if args.tenant else (tx.chain_tenants() or ["default"])
+            failed = False
+            for tenant in tenants:
+                report = engine.verify_chain(
+                    tenant, expect_head=args.expect_head, expect_signer=args.expect_signer
+                )
+                print(report.summary())
+                for problem in report.mismatches:
+                    print(f"  ! {problem}")
+                for note in report.notes:
+                    print(f"  - {note}")
+                failed = failed or not report.ok
+            if not args.expect_head:
+                print(
+                    "Note: without --expect-head, entries deleted from the end of the "
+                    "chain cannot be detected."
+                )
+            return 1 if failed else 0
+    finally:
+        engine.ledger.close()
     return 2
 
 

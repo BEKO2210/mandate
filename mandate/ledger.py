@@ -9,7 +9,9 @@ from decimal import ROUND_HALF_UP, Decimal
 from pathlib import Path
 from typing import Any
 
-from .crypto import iso, utcnow
+from .chain import body_hash as chain_body_hash
+from .chain import loads_strict
+from .crypto import iso, utcnow, verify_object
 from .money import exponent, from_minor
 from .states import InvalidTransition, assert_transition
 
@@ -141,6 +143,24 @@ class Ledger:
               correlation_id TEXT,
               payload TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS chain (
+              tenant TEXT NOT NULL,
+              seq INTEGER NOT NULL,
+              receipt_id TEXT NOT NULL,
+              outcome TEXT NOT NULL,
+              body_hash TEXT NOT NULL,
+              prev TEXT NOT NULL,
+              entry_hash TEXT NOT NULL,
+              recorded_at TEXT NOT NULL,
+              signer TEXT NOT NULL,
+              signature TEXT NOT NULL,
+              PRIMARY KEY (tenant, seq)
+            );
+            -- An entry may appear at exactly one position: without this, an
+            -- operator could replay a real, correctly signed entry elsewhere
+            -- in the chain.
+            CREATE UNIQUE INDEX IF NOT EXISTS chain_entry_hash ON chain(entry_hash);
+            CREATE INDEX IF NOT EXISTS chain_receipt ON chain(receipt_id);
             """
         )
 
@@ -180,6 +200,48 @@ class Ledger:
             self._conn.execute(
                 "INSERT OR REPLACE INTO meta(key, value) VALUES ('schema_version', '3')"
             )
+        if self._schema_version() < 4:
+            self._migrate_start_chain()
+
+    def _migrate_start_chain(self) -> None:
+        """Start the chain, and snapshot the receipts that predate it.
+
+        One transaction, with the version re-checked after the write lock is
+        held. Without that, two processes could both see version 3, one could
+        finish and write a chained receipt, and the other could then count that
+        receipt into the baseline — inflating the very number that bounds how
+        many unchained receipts are tolerated.
+
+        The chain starts empty. Seeding it from the receipts that already exist
+        would produce a chain that looks like it covered them all along; it did
+        not, and a verifier has to be able to say so.
+        """
+        self._conn.execute("BEGIN IMMEDIATE")
+        try:
+            if self._schema_version() >= 4:
+                self._conn.execute("ROLLBACK")
+                return
+            legacy = {
+                row["tenant"]: row["n"]
+                for row in self._conn.execute(
+                    "SELECT tenant, COUNT(*) AS n FROM receipts GROUP BY tenant"
+                )
+            }
+            self._conn.execute(
+                "INSERT OR REPLACE INTO meta(key, value) VALUES ('chain_started_at', ?)",
+                (iso(utcnow()),),
+            )
+            self._conn.execute(
+                "INSERT OR REPLACE INTO meta(key, value) VALUES ('chain_legacy', ?)",
+                (json.dumps(legacy, sort_keys=True),),
+            )
+            self._conn.execute(
+                "INSERT OR REPLACE INTO meta(key, value) VALUES ('schema_version', '4')"
+            )
+            self._conn.execute("COMMIT")
+        except Exception:
+            self._conn.execute("ROLLBACK")
+            raise
 
     def _migrate_add_tenancy(self) -> None:
         """Every record belongs to a tenant. Pre-0.4 rows join the default one."""
@@ -420,7 +482,14 @@ class _Tx:
             (amount, grant_id, currency, day),
         )
 
-    def insert_receipt(self, rec: dict) -> None:
+    def insert_receipt(self, rec: dict, chain: dict) -> None:
+        """A receipt and its first chain entry land together or not at all.
+
+        `chain` is required rather than optional on purpose: an unchained
+        receipt is exactly the gap this feature exists to close, and a default
+        would let a future caller reopen it by forgetting an argument.
+        """
+        self.append_chain(chain)
         self.l._conn.execute(
             """INSERT INTO receipts(id, grant_id, agent_did, principal_did, audience, nonce,
                action, amount, amount_minor, currency, state, execution_id, body, budget_day,
@@ -494,7 +563,21 @@ class _Tx:
             return None
         return dict(row)
 
-    def cas_state(self, receipt_id: str, src: str, dst: str, body: dict | None = None) -> bool:
+    def cas_state(
+        self, receipt_id: str, src: str, dst: str, body: dict | None = None,
+        chain: dict | None = None,
+    ) -> bool:
+        """Move a receipt's state and record the move in the chain.
+
+        `chain` is keyword-optional only so the signature stays readable; a
+        missing one raises. The entry is appended after the CAS succeeds, so a
+        lost race leaves no entry for a transition that never happened.
+        """
+        # Before the transition check: a caller who forgot the chain entry has
+        # made a programming error, and should be told that one, whether or not
+        # the transition they asked for was also illegal.
+        if chain is None:
+            raise StorageError("a state change must be chained")
         assert_transition(src, dst)
         if body is None:
             cur = self.l._conn.execute(
@@ -506,7 +589,10 @@ class _Tx:
                 "UPDATE receipts SET state=?, body=? WHERE id=? AND state=?",
                 (dst, json.dumps(body), receipt_id, src),
             )
-        return cur.rowcount == 1
+        if cur.rowcount != 1:
+            return False
+        self.append_chain(chain)
+        return True
 
     def set_receipt_budget_day(self, receipt_id: str, day: str) -> None:
         self.l._conn.execute("UPDATE receipts SET budget_day=? WHERE id=?", (day, receipt_id))
@@ -592,6 +678,123 @@ class _Tx:
             "SELECT * FROM executions WHERE idempotency_key=?", (idem,)
         ).fetchone()
         return dict(row) if row else None
+
+    # --- the receipt chain ------------------------------------------------
+
+    def chain_head(self, tenant: str) -> dict | None:
+        """The last entry of a tenant's chain, read inside the transaction.
+
+        Reading the head and appending the next entry have to be one atomic
+        step or two concurrent writers would both build on the same `prev`.
+        `BEGIN IMMEDIATE` makes that so for every caller of `tx()`.
+        """
+        row = self.l._conn.execute(
+            "SELECT * FROM chain WHERE tenant=? ORDER BY seq DESC LIMIT 1", (tenant,)
+        ).fetchone()
+        return dict(row) if row else None
+
+    def append_chain(self, entry: dict) -> None:
+        try:
+            self.l._conn.execute(
+                """INSERT INTO chain(tenant, seq, receipt_id, outcome, body_hash, prev,
+                   entry_hash, recorded_at, signer, signature)
+                   VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                (
+                    entry["tenant"], entry["seq"], entry["receipt_id"], entry["outcome"],
+                    entry["body_hash"], entry["prev"], entry["entry_hash"],
+                    entry["recorded_at"], entry["signer"], entry["signature"],
+                ),
+            )
+        except sqlite3.IntegrityError as exc:
+            # Either seq is taken or this exact entry already sits elsewhere in
+            # the chain. Both mean the caller is about to write history that
+            # does not follow from what is there.
+            raise StorageError(f"chain entry {entry.get('seq')} is not appendable: {exc}") from exc
+        except KeyError as exc:
+            raise StorageError(f"chain entry is missing {exc}") from exc
+
+    def chain_entries(self, tenant: str) -> list[dict]:
+        rows = self.l._conn.execute(
+            "SELECT * FROM chain WHERE tenant=? ORDER BY seq ASC", (tenant,)
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def chain_tenants(self) -> list[str]:
+        """Every tenant a verifier has to look at — the union, not the chain.
+
+        Taking this from `chain` alone would skip a tenant that has receipts
+        and no entries, which is exactly the shape a receipt written around
+        the chain has. An operator could open a fresh tenant, insert a forged
+        receipt into it, and `mandate chain verify` would report nothing and
+        exit 0: the one tenant worth looking at is the one with no chain.
+        Review found the omission; it verified as an evasion.
+        """
+        rows = self.l._conn.execute(
+            """SELECT tenant FROM chain
+               UNION SELECT tenant FROM receipts
+               ORDER BY tenant"""
+        ).fetchall()
+        return [r["tenant"] for r in rows]
+
+    def receipt_digests(self, tenant: str) -> dict[str, dict[str, Any]]:
+        """What the database now says about each receipt, hashed and checked.
+
+        The hash is recomputed from the stored body rather than read from a
+        column, so an operator who edits the body cannot also edit a cached
+        digest to match.
+
+        Each receipt's own proof is verified here too. The chain proves what
+        the set of receipts is; it never asked whether a row in it was ever
+        signed. A fabricated receipt in a tenant the chain does not cover
+        was sitting unexamined — `verify_object` needs no secret, only the
+        DID the proof already names, so there was no reason not to ask.
+        """
+        out: dict[str, dict[str, Any]] = {}
+        for row in self.l._conn.execute(
+            "SELECT id, state, body FROM receipts WHERE tenant=?", (tenant,)
+        ):
+            try:
+                body = loads_strict(row["body"])
+                digest = {
+                    "state": row["state"],
+                    "body_hash": chain_body_hash(body),
+                    "proof_ok": verify_object(body) if isinstance(body, dict) else False,
+                }
+            except (ValueError, TypeError) as exc:
+                # Reported, not raised: a verifier has to survive bad rows and
+                # name them, not stop at the first one. The hashing and the
+                # proof check sit inside the boundary rather than after it —
+                # an unpaired surrogate raised on the way *out* of parsing and
+                # took the entire report with it, findings about other
+                # receipts included. One poisoned row must cost one finding,
+                # never the run.
+                out[row["id"]] = {"state": row["state"], "body_hash": None,
+                                  "error": f"stored JSON is unusable ({exc})"}
+                continue
+            out[row["id"]] = digest
+        return out
+
+    def legacy_receipts(self, tenant: str) -> int:
+        raw = self.meta("chain_legacy")
+        if not raw:
+            return 0
+        try:
+            return int(json.loads(raw).get(tenant, 0))
+        except (ValueError, AttributeError, TypeError):
+            return 0
+
+    def unchained_receipts(self, tenant: str) -> int:
+        """Receipts with no entry at all — the ones that predate the chain."""
+        row = self.l._conn.execute(
+            """SELECT COUNT(*) AS n FROM receipts r WHERE r.tenant=?
+               AND NOT EXISTS (SELECT 1 FROM chain c WHERE c.receipt_id = r.id)""",
+            (tenant,),
+        ).fetchone()
+        return int(row["n"]) if row else 0
+
+    def meta(self, key: str) -> str | None:
+        row = self.l._conn.execute("SELECT value FROM meta WHERE key=?", (key,)).fetchone()
+        return row["value"] if row else None
 
     def audit(self, event: str, payload: dict, correlation_id: str | None = None) -> None:
         safe = {k: v for k, v in payload.items() if k not in {"proof", "private", "token", "authorization", "api_key"}}

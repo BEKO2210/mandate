@@ -4,10 +4,11 @@ from .auth import DEFAULT_TENANT, LedgerApiKeyAuth, OpenAccess, RateLimiter, iss
 from .crypto import KeyPair, sign_object, verify_object
 from .engine import Engine
 from .models import AgentCard, Constraint, Grant, Intent, Principal
+from .chain import ChainReport, verify_chain
 from .policy import evaluate
 from .signing import Signer, SigningError, signer_from_config
 
-__version__ = "0.6.0"
+__version__ = "0.7.0"
 __all__ = [
     "Engine",
     "OpenAccess",
@@ -22,6 +23,8 @@ __all__ = [
     "Intent",
     "Constraint",
     "evaluate",
+    "ChainReport",
+    "verify_chain",
     "sign_object",
     "Signer",
     "SigningError",
