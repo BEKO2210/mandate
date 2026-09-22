@@ -54,6 +54,13 @@ def main(argv: list[str] | None = None) -> int:
     mcp_serve = mcp_sub.add_parser("serve", help="Serve the guard on stdio")
     mcp_serve.add_argument("--config", required=True)
 
+    signer = sub.add_parser("signer", help="Inspect the keys Mandate signs with")
+    signer_sub = signer.add_subparsers(dest="signer_cmd", required=True)
+    check = signer_sub.add_parser(
+        "check", help="Prove a configured signer can sign, before anything depends on it"
+    )
+    check.add_argument("--config", required=True, help="An MCP guard configuration file")
+
     args = p.parse_args(argv)
 
     if args.cmd == "demo":
@@ -71,6 +78,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.cmd == "mcp":
         return _mcp(args)
+
+    if args.cmd == "signer":
+        return _signer(args)
 
     return 2
 
@@ -95,7 +105,11 @@ def _mcp(args) -> int:
         print(f"agent     : {state['agent_did']}")
         print(f"grant     : {state['grant_id']}")
         print(f"scopes    : {', '.join(config.scopes())}")
-        print(f"keys in   : {config.store_path / 'keys'} (development keys, keep them private)")
+        if config.agent_signer:
+            print(f"agent key : {config.agent_signer.get('kind')} — not written here")
+        else:
+            print(f"agent key : {config.store_path / 'keys' / 'agent.key'} (development key)")
+        print(f"keys in   : {config.store_path / 'keys'} (keep them private)")
         return 0
 
     if args.mcp_cmd == "serve":
@@ -107,6 +121,51 @@ def _mcp(args) -> int:
         return 0
 
     return 2
+
+
+def _signer(args) -> int:
+    """Answer one question: can this configuration actually sign, and as whom?
+
+    Worth its own command because the alternative is finding out during a tool
+    call, where the failure reaches a model as a refused action rather than an
+    operator as a fixable error.
+    """
+    from .mcp.config import load_config, read_state
+    from .mcp.server import load_agent_signer
+    from .signing import SigningError
+
+    config = load_config(args.config)
+    state = read_state(config) or {}
+    failed = False
+
+    for label, build in (
+        ("agent", lambda: load_agent_signer(config)),
+        ("enforcer", config.build_enforcer_signer),
+    ):
+        try:
+            signer = build()
+        except (SigningError, FileNotFoundError) as exc:
+            print(f"{label:<9}: UNUSABLE — {exc}")
+            failed = True
+            continue
+        if signer is None:
+            print(f"{label:<9}: local development key in {config.store_path}")
+            continue
+        try:
+            report = signer.check()
+        except SigningError as exc:
+            print(f"{label:<9}: UNUSABLE — {exc}")
+            failed = True
+            continue
+        held = "held by this process" if report["signer"] == "file" else "held elsewhere"
+        print(f"{label:<9}: {report['signer']} ok, {held}")
+        print(f"{'':9}  {report['did']}")
+        expected = state.get("agent_did") if label == "agent" else None
+        if expected and expected != report["did"]:
+            print(f"{'':9}  MISMATCH — the grant was issued to {expected}")
+            failed = True
+
+    return 1 if failed else 0
 
 
 async def _refuse_call(name: str, arguments: dict) -> None:

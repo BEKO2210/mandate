@@ -26,6 +26,8 @@ In scope:
 - Budget, nonce, approval or execution-claim defects: double spend, replay,
   double dispatch, a receipt that misstates what happened
 - Forging, tampering with or misattributing a signed object
+- A configured signer emitting a signature that does not verify against the DID
+  it is bound to, or a signer failure resulting in anything being dispatched
 - Reaching an unregistered destination, or a private or metadata address under
   the default `public` network policy
 
@@ -40,8 +42,11 @@ and `docs/SECURITY_BACKLOG.md`:
 - The receipt binds the body the gateway committed to sending, not proof of
   upstream receipt
 - Routes and operations are configured in code, not from a file or admin API
-- The MCP guard holds the agent key, so its process is the enforcement
-  boundary; code running inside it can make it sign
+- The MCP guard is the enforcement boundary; code running inside it can make
+  it sign, whether the key is a local file or in a key manager. A key manager
+  removes the durable secret and revokes signing, not the ability of resident
+  code to ask for a signature while it is resident
+- The principal key that issues grants is local by default
 
 ## Supported versions
 

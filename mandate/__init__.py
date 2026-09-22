@@ -5,8 +5,9 @@ from .crypto import KeyPair, sign_object, verify_object
 from .engine import Engine
 from .models import AgentCard, Constraint, Grant, Intent, Principal
 from .policy import evaluate
+from .signing import Signer, SigningError, signer_from_config
 
-__version__ = "0.5.0"
+__version__ = "0.6.0"
 __all__ = [
     "Engine",
     "OpenAccess",
@@ -22,5 +23,8 @@ __all__ = [
     "Constraint",
     "evaluate",
     "sign_object",
+    "Signer",
+    "SigningError",
+    "signer_from_config",
     "verify_object",
 ]

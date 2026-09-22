@@ -16,9 +16,10 @@ from typing import Any
 from uuid import uuid4
 
 from ..auth import DEFAULT_TENANT
-from ..crypto import KeyPair, sign_object
+from ..crypto import sign_object
 from ..engine import Engine, MandateError
 from ..models import Intent
+from ..signing import Signer, SigningError
 from .mapping import MappingError, ToolMapping
 
 
@@ -28,6 +29,9 @@ class GuardDecision:
     text: str
     outcome: str
     receipt_id: str | None = None
+    # For the operator's log, never for the model: a key manager's error can
+    # name hosts, paths and ARNs, and `text` is tool output the model reads.
+    detail: str | None = None
 
     def to_tool_result(self) -> dict[str, Any]:
         """Shape an MCP tool result: refusals are errors, not silent successes."""
@@ -38,14 +42,14 @@ class McpGuard:
     def __init__(
         self,
         engine: Engine,
-        agent_kp: KeyPair,
+        agent_signer: Signer,
         grant_id: str,
         mapping: ToolMapping,
         tenant: str = DEFAULT_TENANT,
         executor=None,
     ) -> None:
         self.engine = engine
-        self.agent_kp = agent_kp
+        self.agent_signer = agent_signer
         self.grant_id = grant_id
         self.mapping = mapping
         self.tenant = tenant
@@ -59,13 +63,30 @@ class McpGuard:
         except MappingError as exc:
             return GuardDecision(False, f"Mandate refused this call: {exc}", "UNMAPPED")
 
-        intent = Intent.create(
-            agent_did=self.agent_kp.did(),
-            grant_id=self.grant_id,
-            nonce=uuid4().hex,
-            **fields,
-        )
-        signed = sign_object(self.agent_kp, intent.to_dict())
+        try:
+            # Both of these reach the key manager when the key is not local:
+            # naming the agent needs its DID, and signing needs the key itself.
+            intent = Intent.create(
+                agent_did=self.agent_signer.did(),
+                grant_id=self.grant_id,
+                nonce=uuid4().hex,
+                **fields,
+            )
+            signed = sign_object(self.agent_signer, intent.to_dict())
+        except SigningError as exc:
+            # The key manager is unreachable or holds a different key. Refusing
+            # is the only safe answer: an unsigned intent must never be
+            # dispatched, and a call nobody can attribute is worse than none.
+            # What went wrong goes to the operator; the model is told only that
+            # retrying will not help, which is the part it can act on.
+            return GuardDecision(
+                False,
+                "Mandate could not sign this call, so nothing was dispatched. "
+                "The signing key is unavailable — this is an operator problem, "
+                "not a limit of the grant, and retrying will not clear it.",
+                "SIGNER_UNAVAILABLE",
+                detail=str(exc),
+            )
 
         try:
             receipt = self.engine.submit_intent(signed, tenant=self.tenant)

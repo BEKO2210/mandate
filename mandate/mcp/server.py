@@ -21,9 +21,10 @@ from typing import Any
 
 from ..crypto import KeyPair, utcnow
 from ..engine import Engine
-from ..keys import PersistedDevKeyProvider
+from ..keys import PersistedDevKeyProvider, SignerKeyProvider
 from ..ledger import Ledger
 from ..routes import Route, RouteRegistry
+from ..signing import FileSigner, Signer, SigningError
 from .config import GuardConfig, read_state, write_state
 from .executor import McpExecutor
 from .guard import McpGuard
@@ -59,9 +60,15 @@ def build_engine(config: GuardConfig, call_tool, tool_names: list[str]) -> tuple
         tenant=config.tenant,
     )
     executor = McpExecutor(call_tool, timeout=config.timeout)
+    enforcer = config.build_enforcer_signer()
+    keys = (
+        SignerKeyProvider(enforcer)
+        if enforcer is not None
+        else PersistedDevKeyProvider(store / "enforcer-keys")
+    )
     engine = Engine(
         ledger=Ledger(store / "mandate.sqlite"),
-        key_provider=PersistedDevKeyProvider(store / "enforcer-keys"),
+        key_provider=keys,
         routes=RouteRegistry([route]),
         executor=executor,
     )
@@ -71,21 +78,24 @@ def build_engine(config: GuardConfig, call_tool, tool_names: list[str]) -> tuple
 def bootstrap(config: GuardConfig, engine: Engine) -> dict[str, str]:
     """Create the principal, agent and grant this guard runs under.
 
-    Development convenience: both private keys are written to the store as
-    plain files. A deployment that matters issues the grant elsewhere and gives
-    the guard only the agent key.
+    Without an `agent_signer` this is a development convenience: both private
+    keys are written to the store as plain files. With one, the agent key is
+    never generated here and never written anywhere — the key manager already
+    holds it, and this only records the DID it publishes.
     """
     keys = config.store_path / "keys"
     keys.mkdir(parents=True, exist_ok=True)
     principal, principal_kp = engine.register_principal(
         config.grant.organization, kind="org", tenant=config.tenant
     )
+    agent_signer = config.build_agent_signer()
     agent, agent_kp = engine.register_agent(
         name=config.server_name,
         operator_did=principal.did,
         developer="Mandate",
         model="mcp-guard",
         tenant=config.tenant,
+        signer=agent_signer,
     )
     grant = engine.issue_grant(
         principal=principal,
@@ -99,7 +109,8 @@ def bootstrap(config: GuardConfig, engine: Engine) -> dict[str, str]:
         tenant=config.tenant,
     )
     _write_key(keys / "principal.key", principal_kp)
-    _write_key(keys / "agent.key", agent_kp)
+    if agent_signer is None:
+        _write_key(keys / "agent.key", agent_kp)
     state = {
         "principal_did": principal.did,
         "agent_did": agent.did,
@@ -118,13 +129,17 @@ def _write_key(path: Path, kp: KeyPair) -> None:
         pass
 
 
-def load_agent_key(config: GuardConfig) -> KeyPair:
+def load_agent_signer(config: GuardConfig) -> Signer:
+    """The key the guard signs intents with — held here, or held elsewhere."""
+    configured = config.build_agent_signer()
+    if configured is not None:
+        return configured
     path = config.store_path / "keys" / "agent.key"
     if not path.exists():
         raise FileNotFoundError(
             f"{path} is missing; run `mandate mcp init --config <file>` first"
         )
-    return KeyPair.from_private_bytes(bytes.fromhex(path.read_text(encoding="utf-8").strip()))
+    return FileSigner(path)
 
 
 def make_server(name: str, tools: list[Any], guard: McpGuard):
@@ -151,7 +166,8 @@ def make_server(name: str, tools: list[Any], guard: McpGuard):
         # The worker thread is what lets the executor hand its coroutine back.
         decision = await anyio.to_thread.run_sync(lambda: guard.call(tool, arguments))
         if not decision.allowed:
-            log(f"{tool}: {decision.outcome} ({decision.receipt_id})")
+            detail = f" — {decision.detail}" if decision.detail else ""
+            log(f"{tool}: {decision.outcome} ({decision.receipt_id}){detail}")
         return types.CallToolResult(
             content=[types.TextContent(type="text", text=decision.text)],
             isError=not decision.allowed,
@@ -188,16 +204,38 @@ async def serve(config: GuardConfig) -> None:
                 )
             log(f"exposing {len(exposed)} of {len(names)} upstream tools")
 
-            engine, executor = build_engine(config, session.call_tool, exposed)
-            state = read_state(config) or bootstrap(config, engine)
+            try:
+                engine, executor = build_engine(config, session.call_tool, exposed)
+                state = read_state(config) or bootstrap(config, engine)
+                signer = load_agent_signer(config)
+            except SigningError as exc:
+                # Includes the enforcer key: `Engine` asks it for its DID while
+                # being constructed, so a broken one fails here.
+                raise SystemExit(f"cannot start: {exc}")
+            # Prove the key works before the model can ask for anything. A
+            # signer that is only discovered to be broken on the first tool
+            # call has already cost a call and told the model nothing useful.
+            try:
+                check = getattr(signer, "check", None)
+                report = check() if callable(check) else {
+                    "signer": type(signer).__name__, "did": signer.did()
+                }
+            except SigningError as exc:
+                raise SystemExit(f"agent signer is unusable: {exc}")
+            if report.get("did") not in (None, state["agent_did"]):
+                raise SystemExit(
+                    f"the configured signer holds {report['did']}, but the grant was "
+                    f"issued to {state['agent_did']}; intents would be refused"
+                )
             guard = McpGuard(
                 engine=engine,
-                agent_kp=load_agent_key(config),
+                agent_signer=signer,
                 grant_id=state["grant_id"],
                 mapping=config.mapping,
                 tenant=config.tenant,
                 executor=executor,
             )
+            log(f"agent key: {report.get('signer', 'file')} ({state['agent_did']})")
             log(f"grant {state['grant_id']} for tenant {config.tenant}")
 
             tools = [t for t in listed.tools if t.name in set(exposed)]

@@ -19,6 +19,7 @@ from .money import MoneyError
 from .payload import PayloadError, body_hash, build_payload, encode
 from .policy import constraint_minor, evaluate, intent_amount_minor
 from .routes import RouteRegistry
+from .signing import Signer
 from .states import InvalidTransition
 from .validate import (
     ValidationError,
@@ -94,7 +95,7 @@ class Engine:
     def __init__(
         self,
         store=None,
-        enforcer: KeyPair | None = None,
+        enforcer: Signer | None = None,
         key_provider: KeyProvider | None = None,
         ledger: Ledger | None = None,
         routes: RouteRegistry | None = None,
@@ -137,9 +138,12 @@ class Engine:
 
     def register_principal(
         self, name: str, kind: str = "person", jurisdiction: str = "DE",
-        tenant: str = DEFAULT_TENANT,
+        tenant: str = DEFAULT_TENANT, signer: Signer | None = None,
     ):
-        kp = KeyPair.generate()
+        # With a signer the engine never sees a private key: the DID comes from
+        # the key manager, and the caller gets the same signer back in place of
+        # the keypair it would otherwise have had to store.
+        kp = signer if signer is not None else KeyPair.generate()
         p = Principal(did=kp.did(), kind=kind, name=name, jurisdiction=jurisdiction)
         with self.ledger.tx() as tx:
             tx.put_principal(p.did, p.to_dict(), tenant=tenant)
@@ -151,9 +155,10 @@ class Engine:
         return p, kp
 
     def register_agent(
-        self, name, operator_did, developer, model, skills=None, tenant: str = DEFAULT_TENANT
+        self, name, operator_did, developer, model, skills=None, tenant: str = DEFAULT_TENANT,
+        signer: Signer | None = None,
     ):
-        kp = KeyPair.generate()
+        kp = signer if signer is not None else KeyPair.generate()
         card = AgentCard(
             did=kp.did(),
             name=name,
@@ -366,7 +371,7 @@ class Engine:
         return body
 
     def approve(
-        self, receipt_id: str, principal_kp: KeyPair, approval: dict | None = None,
+        self, receipt_id: str, principal_kp: Signer, approval: dict | None = None,
         tenant: str = DEFAULT_TENANT,
     ) -> dict[str, Any]:
         """Revalidate then HUMAN_REQUIRED -> AUTHORIZED. Never jumps to EXECUTED."""

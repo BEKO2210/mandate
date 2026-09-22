@@ -3,6 +3,63 @@
 All notable changes to this project are documented here.
 This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] — 2026-09-22
+
+### Added
+
+- **Signing keys that never enter the process.** A `Signer` is anything that
+  can name a DID and sign bytes; `KeyPair` is one, and so is a key manager that
+  will not hand the key back. `mandate/signing.py` adds AWS KMS
+  (`ECC_NIST_EDWARDS25519`), Google Cloud KMS (`EC_SIGN_ED25519`), Vault's
+  transit engine (`ed25519`) and an external command for HSMs and PKCS#11.
+  Gates G120-G122, G129-G140.
+- **Every remote signature is verified before it is returned.** A key manager
+  pointed at the wrong key, or returning a DER-wrapped or truncated signature,
+  fails at sign time rather than producing a receipt nobody can verify later.
+  Gates G123-G125.
+- `Signer.check()` and `mandate signer check --config` prove a signer works —
+  and that it holds the DID the grant was issued to — before anything depends
+  on it. The guard runs the same check at startup and refuses to serve if it
+  fails. Gates G126-G128.
+- `agent_signer` and `enforcer_signer` in an MCP guard configuration. With
+  `agent_signer` set, `mandate mcp init` generates and writes no agent key at
+  all. Secrets come from the environment, never from the configuration file, so
+  the file can be committed. Gates G141-G142, G145-G148.
+- `SignerKeyProvider` puts the gateway's enforcer key in a key manager.
+  Receipts verify exactly as before. Gate G121.
+- `Engine.register_principal(signer=…)` and `register_agent(signer=…)` record a
+  DID a key manager already holds instead of generating a private key. Gate
+  G122.
+
+### Changed
+
+- The MCP guard refuses a call it cannot sign — `SIGNER_UNAVAILABLE`, nothing
+  dispatched. An unsigned intent must never reach an upstream. Gate G144.
+- A signing failure's detail reaches the operator's log, not the model:
+  refusal text is tool output, and a key manager's error can name hosts, paths
+  and ARNs. `GuardDecision.detail` carries it. Gate G149.
+- `McpGuard(agent_kp=…)` is now `McpGuard(agent_signer=…)`, and
+  `load_agent_key` is `load_agent_signer`. Breaking, and only for callers that
+  built a guard directly.
+- Vault over plain `http` is refused unless chosen out loud: the token travels
+  in a header. Gates G135-G137.
+- `AwsKmsSigner` refuses a payload over 4096 bytes with a message naming the
+  alternatives. Found by measuring rather than reading: an EXECUTED receipt is
+  already ~2.9 KiB, and a 2031-byte context — legal under `MAX_CONTEXT_BYTES` —
+  produces a 4115-byte receipt that KMS rejects. Signing a digest instead is
+  not an escape, because `ED25519_PH_SHA_512` is HashEdDSA and would not verify
+  against the object's own `did:key`. Gate G150.
+
+### Still open
+
+A key manager does not bound a live compromise of the signing process — code
+running inside it can ask for signatures for as long as it is there. The
+principal key that issues grants is local by default. The HTTP gateway still
+takes its enforcer signer as a constructor argument, because routes and keys
+are configured in code. A tamper-evident receipt chain and nonce pruning are
+not implemented. AWS KMS cannot hold an enforcer key for deployments whose
+receipts approach 4 KiB.
+
 ## [0.5.0] — 2026-09-22
 
 ### Added

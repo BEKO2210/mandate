@@ -1,10 +1,37 @@
-# Mandate v0.5.0
+# Mandate v0.6.0
 
 Enforcement gateway for AI-agent grants.
 
 An agent cannot call a protected upstream unless the gateway has a currently valid principal authorization — and cannot reach the gateway at all without a key.
 
-## What v0.5.0 adds
+## What v0.6.0 adds
+
+**The signing key no longer has to be in the process.** A signer is anything
+that can name a DID and sign bytes — a local key, or AWS KMS, Cloud KMS, Vault
+transit, or a command fronting an HSM. With one configured, `mandate mcp init`
+generates and writes no agent key at all.
+
+```json
+"agent_signer": {"kind": "aws-kms", "key_id": "arn:aws:kms:eu-central-1:1234:key/abcd"}
+```
+
+```bash
+$ mandate signer check --config guard.json
+agent    : aws-kms ok, held elsewhere
+           did:key:z6Mkkhyu…
+```
+
+Every remote signature is verified against the signer's DID before it is
+returned, so a key manager holding the wrong key fails at sign time instead of
+producing a receipt that will not verify. A signer that cannot sign refuses the
+call — `SIGNER_UNAVAILABLE`, nothing dispatched.
+
+What this does **not** do: stop code already running in the signing process
+from asking for signatures. It removes the exfiltratable secret, makes
+revocation effective, and leaves a signing log the host cannot edit. See
+[docs/KMS.md](docs/KMS.md).
+
+## What v0.5.0 established
 
 **Mandate in front of MCP tools.** The guard sits between a model and an
 existing MCP server, re-exposes that server's tools with their own schemas, and
@@ -77,7 +104,7 @@ that defaults to `"default"`.
 
 MCP, A2A, EUDI, wallets, UI, subdelegation, organization credentials, marketplace, payments, perfect exactly-once HTTP.
 
-A tamper-evident receipt chain, a KMS key provider, route and key configuration outside code and CLI, and nonce pruning are not implemented.
+A tamper-evident receipt chain, route and key configuration outside code and CLI, and nonce pruning are not implemented.
 
 ## Known limitations
 
@@ -88,6 +115,8 @@ The receipt binds the request body the gateway *committed to sending*. It does n
 The rate limiter is in-process, so it bounds one gateway process. That matches a ledger that is a single SQLite file on one node.
 
 On timeout or an unknown executor error the state is `EXECUTION_UNKNOWN` and the reservation is kept. Reconciling it is a human decision.
+
+A key manager does not bound a live compromise: code inside the signing process can ask it for signatures for as long as it is there. The principal key that issues grants is local by default.
 
 ## Money
 
@@ -104,3 +133,5 @@ python3 -m pytest tests/ -q
 Gateway: GET /health, GET /v1/info, POST /v1/intents, POST /v1/approvals, GET /v1/receipts/{id}
 
 MCP guard: `mandate mcp serve --config guard.json`
+
+Signer check: `mandate signer check --config guard.json`

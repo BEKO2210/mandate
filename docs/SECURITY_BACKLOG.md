@@ -79,6 +79,30 @@ chosen out loud with `OpenAccess()`.
 
 Covered by G81-G98.
 
+## SH-08 — A signing key must not be a file the signing process can read — DONE in v0.6.0
+
+Every private key was an `Ed25519PrivateKey` in the memory of the process that
+signed with it, loaded from a file beside the ledger. The MCP guard made the
+cost concrete: it held the agent key in the same process a model talks to, so
+the key survived any compromise of that process and kept working wherever it
+was copied.
+
+A signer is now anything that can name a DID and sign bytes. `mandate/signing.py`
+adds AWS KMS (`ECC_NIST_EDWARDS25519`), Cloud KMS (`EC_SIGN_ED25519`), Vault
+transit (`ed25519`) and an external command for HSMs. Every remote signature is
+verified against the signer's DID before it is returned, so a mispointed key
+manager fails at sign time rather than producing an unverifiable receipt. With
+a signer configured, `mandate mcp init` generates and writes no agent key at
+all, and a signer that cannot sign refuses the call with nothing dispatched.
+
+Residual, and stated rather than fixed: a key manager does not stop code
+already running in the signing process from asking for signatures. It removes
+the exfiltratable secret, makes revocation effective, and produces a signing
+log the host cannot edit. The grant's limits remain what bound a live
+compromise.
+
+Covered by G120-G149.
+
 ## Residual / next
 
 - HTTPS DNS TOCTOU (check then connect by name)
@@ -87,5 +111,12 @@ Covered by G81-G98.
 - Receipts are individually signed but not chained; an operator with database
   access can delete or roll back history
 - The request hash binds what the gateway sent, not what the upstream received
-- Routes and operations are configured in code, not from a file or admin API
+- Routes and operations are configured in code, not from a file or admin API;
+  the HTTP gateway therefore takes its enforcer signer as a constructor
+  argument rather than from configuration
+- A key manager does not bound a live compromise of the signing process
+- AWS KMS caps a signed message at 4096 bytes, which a receipt with a large
+  context exceeds; the signer refuses rather than falling back to a digest,
+  because the digest variant would not verify as `did:key`
+- The principal key that issues grants is local by default
 - Reconciling an EXECUTION_UNKNOWN reservation is still a manual decision
