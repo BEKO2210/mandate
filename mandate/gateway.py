@@ -49,11 +49,15 @@ def create_app(
     engine: Engine,
     auth: Authenticator | None = None,
     rate_limiter: RateLimiter | LedgerRateLimiter | None = None,
+    anchoring=None,
 ) -> FastAPI:
     """Build the gateway.
 
     `auth` is required. Running unauthenticated has to be chosen out loud by
     passing `OpenAccess()`, so no deployment gets there by omission.
+
+    `anchoring`, a `witness.AnchorSchedule`, posts every tenant's chain head
+    to an external witness while the gateway runs.
     """
     if auth is None:
         raise ValueError(
@@ -87,7 +91,16 @@ def create_app(
         # A process that died mid-execution leaves receipts in EXECUTING.
         # They are closed out as EXECUTION_UNKNOWN before serving traffic.
         instance.state.reconciled = engine.reconcile_stale_executions()
-        yield
+        task = None
+        if anchoring is not None:
+            import asyncio
+
+            task = asyncio.create_task(anchoring.loop(engine))
+        try:
+            yield
+        finally:
+            if task is not None:
+                task.cancel()
 
     app = FastAPI(title="Mandate Enforcement Gateway", version=VERSION, lifespan=lifespan)
     app.state.engine = engine

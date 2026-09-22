@@ -213,13 +213,24 @@ is sent.
 
 Covered by G226–G228.
 
+## SH-14 — Heads must leave the operator's reach without a runbook — DONE in v0.9.0
+
+`mandate chain anchor` wrote heads to a file; whether that file was beyond the
+operator's reach was left to the operator. `--witness` posts them to an HTTPS
+endpoint run by someone else, and the gateway's `anchoring` block does it on a
+schedule, once per interval across all workers. Every failure is loud: a
+non-2xx, a redirect, an unreachable witness or a missing token exits non-zero
+or stops the gateway from starting.
+
+Covered by G229–G232.
+
 ## Residual / next
 
 - A chain cannot prove what was removed from its own end; truncation is only
-  detectable against a head kept outside the deployment. `mandate chain anchor`
-  now writes those heads and `--anchors` checks them, so this is a deployment
-  obligation rather than an open gap: an anchor stored on the same disk, under
-  the same operator, buys nothing
+  detectable against a head kept outside the deployment. The gateway now posts
+  heads to a witness on a schedule (`anchoring`) and `mandate chain anchor
+  --witness` does it on demand, so what remains is choosing a witness the
+  operator does not control — which no software can do for them
 - The chain is signed by the enforcer key; a compromise of that key allows
   history and chain to be re-signed together, from the moment it is taken
   until it is rotated away. `mandate chain rotate` bounds that window — the

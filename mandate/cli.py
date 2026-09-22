@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from datetime import timedelta
 from pathlib import Path
@@ -143,8 +144,16 @@ def main(argv: list[str] | None = None) -> int:
     ch_anchor.add_argument("--db", default=str(DEFAULT_DB))
     ch_anchor.add_argument("--tenant", default=None, help="Default: every tenant")
     ch_anchor.add_argument(
-        "--file", required=True,
+        "--file", default=None,
         help="Where to append. Put it somewhere the database operator cannot reach.",
+    )
+    ch_anchor.add_argument(
+        "--witness", default=None,
+        help="POST the heads to this URL, run by someone other than the operator",
+    )
+    ch_anchor.add_argument(
+        "--witness-token-env", default=None,
+        help="Environment variable holding a bearer token for the witness",
     )
 
     ch_rotate = ch_sub.add_parser(
@@ -334,21 +343,40 @@ def _chain(args) -> int:
             return 0
 
         if args.chain_cmd == "anchor":
+            from .witness import WitnessError, post_anchors, token_from_env
+
+            if not args.file and not args.witness:
+                print("anchor needs --file, --witness or both", file=sys.stderr)
+                return 2
             with engine.ledger.tx() as tx:
                 tenants = [args.tenant] if args.tenant else (tx.chain_tenants() or [])
-            written = 0
-            with open(args.file, "a", encoding="utf-8") as fh:
-                for tenant in tenants:
-                    anchor = engine.anchor_chain(tenant)
-                    if not anchor:
-                        print(f"{tenant}: the chain is empty, nothing to anchor")
-                        continue
-                    fh.write(json.dumps(anchor, sort_keys=True) + "\n")
-                    print(f"{tenant}: seq {anchor['seq']} {anchor['entry_hash']}")
-                    written += 1
-            if written:
+            anchors = []
+            for tenant in tenants:
+                anchor = engine.anchor_chain(tenant)
+                if not anchor:
+                    print(f"{tenant}: the chain is empty, nothing to anchor")
+                    continue
+                print(f"{tenant}: seq {anchor['seq']} {anchor['entry_hash']}")
+                anchors.append(anchor)
+            if not anchors:
+                return 0
+            if args.witness:
+                # Before the file: a witness that refuses is the failure worth
+                # stopping for, and the file can be written on the retry.
+                try:
+                    digest = post_anchors(
+                        args.witness, anchors, token=token_from_env(args.witness_token_env)
+                    )
+                except WitnessError as exc:
+                    print(f"witness FAILED: {exc}", file=sys.stderr)
+                    return 1
+                print(f"Witnessed by {args.witness} (reply sha256 {digest}).")
+            if args.file:
+                with open(args.file, "a", encoding="utf-8") as fh:
+                    for anchor in anchors:
+                        fh.write(json.dumps(anchor, sort_keys=True) + "\n")
                 print(
-                    f"Appended {written} anchor(s) to {args.file}. It is worth "
+                    f"Appended {len(anchors)} anchor(s) to {args.file}. It is worth "
                     f"something only where this database's operator cannot edit it."
                 )
             return 0
@@ -430,6 +458,14 @@ def _gateway(args) -> int:
         print(f"rate limit: {config.per_minute}/min per key, burst "
               f"{config.burst or config.per_minute}, shared by all workers")
         print(f"upstream  : TLS verified against {config.ca_bundle or 'the system trust store'}")
+        if config.anchoring is None:
+            print("anchoring : OFF — truncation of the chain's end is detectable only "
+                  "against heads kept elsewhere")
+        else:
+            print(f"anchoring : every {config.anchoring.every_s:g}s to {config.anchoring.url}")
+            if config.anchoring.token_env and not os.environ.get(config.anchoring.token_env):
+                print(f"{'':10}  UNUSABLE — ${config.anchoring.token_env} is not set")
+                failed = True
         if config.ca_bundle and not Path(config.ca_bundle).is_file():
             print(f"{'':10}  UNUSABLE — {config.ca_bundle} does not exist")
             failed = True
@@ -448,8 +484,6 @@ def _gateway(args) -> int:
         return 1 if failed else 0
 
     if args.gateway_cmd == "serve":
-        import os
-
         import uvicorn
 
         from .gateway_config import ENV_VAR

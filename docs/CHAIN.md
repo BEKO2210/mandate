@@ -124,6 +124,33 @@ anchor also catches the head being rewritten *beneath* it, which the walk
 cannot: the last entry is the one entry that can be re-signed without
 breaking any `prev`.
 
+A file is only as good as the question of who can edit it. Since v0.9.0 the
+heads can go to a **witness** — an HTTPS endpoint run by someone other than
+the operator: an auditor, a customer, a transparency log.
+
+```bash
+$ mandate chain anchor --db … --witness https://audit.example/anchors \
+    --witness-token-env WITNESS_TOKEN --file anchors.jsonl
+```
+
+The witness receives `{"anchors": [{tenant, seq, entry_hash, anchored_at}]}`,
+the same records the file holds. A non-2xx answer, a redirect (never
+followed), an unreachable host or a missing token is a failure with a
+non-zero exit, and the file is not written as if the heads had been
+witnessed. Plain `http` is accepted only to a loopback address.
+
+The gateway can do it on its own while it runs:
+
+```json
+"anchoring": {"witness": "https://audit.example/anchors", "every_s": 300, "token_env": "WITNESS_TOKEN"}
+```
+
+Workers share the schedule through the ledger, so N workers post once per
+interval, not N times. A failed run is logged at error level on the
+`mandate.witness` logger and retried at the next interval; a token variable
+that is not set stops the gateway from starting. `mandate gateway check`
+reports anchoring as OFF when it is not configured.
+
 The older mechanism still works and needs no file:
 
 ```bash

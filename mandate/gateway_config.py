@@ -30,12 +30,15 @@ from .keys import PersistedDevKeyProvider, SignerKeyProvider
 from .ledger import Ledger
 from .routes import ALLOWED_METHODS, INTENT_FIELDS, Operation, Route, RouteConfigError, RouteRegistry
 from .signing import Signer, signer_from_config
+from .witness import AnchorSchedule, WitnessError, check_witness_url, token_from_env
 
 ENV_VAR = "MANDATE_GATEWAY_CONFIG"
 MAX_TIMEOUT_S = 120.0
 
 _TOP = {"store", "routes", "enforcer_signer", "auth", "rate_limit", "ca_bundle",
-        "execution_stale_after_s"}
+        "execution_stale_after_s", "anchoring"}
+_ANCHORING = {"witness", "every_s", "token_env"}
+MIN_ANCHOR_INTERVAL_S = 60
 _ROUTE = {"audience", "base_url", "tenant", "allowed_methods", "allowed_paths", "timeout",
           "network_policy", "operations"}
 _OPERATION = {"action", "method", "path", "fields", "context_fields", "max_string"}
@@ -58,6 +61,7 @@ class GatewayConfig:
     burst: int | None = None
     ca_bundle: str | None = None
     execution_stale_after_s: int = DEFAULT_EXECUTION_STALE_AFTER_S
+    anchoring: AnchorSchedule | None = None
 
     @property
     def ledger_path(self) -> Path:
@@ -256,6 +260,17 @@ def parse_gateway_config(raw: Any, base_dir: str | Path = ".") -> GatewayConfig:
     if "execution_stale_after_s" in raw:
         stale = _int(raw["execution_stale_after_s"], "execution_stale_after_s", 1)
 
+    anchoring = None
+    if "anchoring" in raw:
+        block = _obj(raw["anchoring"], "anchoring", _ANCHORING, required=("witness", "every_s"))
+        try:
+            url = check_witness_url(_str(block["witness"], "anchoring.witness"))
+        except WitnessError as exc:
+            raise GatewayConfigError(f"anchoring.witness: {exc}") from exc
+        every = _int(block["every_s"], "anchoring.every_s", MIN_ANCHOR_INTERVAL_S)
+        token_env = _str(block["token_env"], "anchoring.token_env") if "token_env" in block else None
+        anchoring = AnchorSchedule(url=url, every_s=float(every), token_env=token_env)
+
     return GatewayConfig(
         store=Path(_relative(base, _str(raw["store"], "store"))),
         routes=routes,
@@ -266,6 +281,7 @@ def parse_gateway_config(raw: Any, base_dir: str | Path = ".") -> GatewayConfig:
         burst=burst,
         ca_bundle=ca_bundle,
         execution_stale_after_s=stale,
+        anchoring=anchoring,
     )
 
 
@@ -301,7 +317,14 @@ def build_app(config: GatewayConfig):
     engine = build_engine(config)
     auth = OpenAccess(config.open_tenant) if config.auth == "open" else LedgerApiKeyAuth(engine.ledger)
     limiter = LedgerRateLimiter(engine.ledger, per_minute=config.per_minute, burst=config.burst)
-    return create_app(engine, auth=auth, rate_limiter=limiter)
+    if config.anchoring is not None:
+        # A token that is missing now would fail every run later, quietly
+        # from the caller's point of view. Refuse to start instead.
+        try:
+            token_from_env(config.anchoring.token_env)
+        except WitnessError as exc:
+            raise GatewayConfigError(f"anchoring: {exc}") from exc
+    return create_app(engine, auth=auth, rate_limiter=limiter, anchoring=config.anchoring)
 
 
 def app_from_env():

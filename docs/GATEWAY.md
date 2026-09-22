@@ -79,6 +79,8 @@ configuration bug that *works*, which is the worst kind.
   verification cannot be switched off.
 - `base_url` may carry a path prefix; it may not carry credentials, a query or
   a fragment.
+- `anchoring` posts every tenant's chain head to a witness on a schedule; see
+  `docs/CHAIN.md`.
 - Relative paths are relative to the configuration file.
 
 Workers share the ledger, and with it the rate limit per key. Each worker
