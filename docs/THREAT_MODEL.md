@@ -74,10 +74,18 @@ password-hashing cost per request would buy nothing. A stolen key is contained
 by disabling it, by its expiry, or by rotating it; it cannot be recovered from
 the ledger.
 
-The rate limiter is in-process. It bounds one gateway process, which is the
-same scope as the single-file SQLite ledger it protects. Running several
-gateway processes against one ledger would need a shared limiter, and is not
-supported today.
+The rate limit is kept in the ledger, so every gateway process serving one
+ledger draws from the same bucket per key; an in-memory bucket would multiply
+the limit by the number of workers. A check that cannot be recorded fails the
+request rather than letting it through unmetered. The bucket uses wall time,
+and a clock stepped backwards refills nothing.
+
+The destination policy is enforced at the socket, not only at the name. The
+name is resolved once, the address is checked, and the connection is made to
+that address — for HTTPS too, with the name kept for SNI and certificate
+verification. Proxy environment variables are ignored, because a proxy
+resolves the name itself and would connect to an address the policy never
+saw. Certificate verification cannot be turned off.
 
 ## The MCP guard
 

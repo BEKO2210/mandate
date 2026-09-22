@@ -13,7 +13,7 @@ from .chain import body_hash as chain_body_hash
 from .chain import ROTATION_ID, loads_strict
 from .crypto import iso, utcnow, verify_object
 from .money import exponent, from_minor
-from .states import InvalidTransition, assert_transition
+from .states import assert_transition
 
 
 class StorageError(Exception):
@@ -190,6 +190,19 @@ class Ledger:
         self._conn.execute(
             "CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)"
         )
+        # Token buckets for the gateway's rate limit. They live here rather
+        # than in a process's memory so that every gateway process serving
+        # this ledger draws from the same bucket; an in-memory limit is
+        # multiplied by the number of workers.
+        self._conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS rate_buckets (
+              key TEXT PRIMARY KEY,
+              tokens REAL NOT NULL,
+              updated REAL NOT NULL
+            )
+            """
+        )
         if self._schema_version() < 2:
             self._migrate_amounts_to_minor()
             self._conn.execute(
@@ -331,8 +344,17 @@ class _Tx:
 
     def __enter__(self):
         self.l._lock.acquire()
-        self.l._check()
-        self.l._conn.execute("BEGIN IMMEDIATE")
+        # If the transaction cannot begin, __exit__ never runs, so the lock
+        # has to be given back here. Holding it would hang every later
+        # transaction in this process — and "database is locked" after the
+        # busy timeout is an ordinary outcome once several processes share
+        # the file.
+        try:
+            self.l._check()
+            self.l._conn.execute("BEGIN IMMEDIATE")
+        except BaseException:
+            self.l._lock.release()
+            raise
         return self
 
     def __exit__(self, exc_type, exc, tb):
@@ -344,6 +366,29 @@ class _Tx:
         finally:
             self.l._lock.release()
         return False
+
+    def take_rate_token(self, key: str, now: float, rate: float, capacity: float) -> float:
+        """Take one token from `key`'s bucket. Returns 0.0 if one was taken,
+        otherwise the seconds until one will be available.
+
+        The bucket's timestamp never moves backwards. A wall clock that steps
+        back and then forward again would otherwise refill the same interval
+        twice.
+        """
+        row = self.l._conn.execute(
+            "SELECT tokens, updated FROM rate_buckets WHERE key=?", (key,)
+        ).fetchone()
+        tokens, last = (capacity, now) if row is None else (row["tokens"], row["updated"])
+        tokens = min(capacity, tokens + max(0.0, now - last) * rate)
+        wait = 0.0 if tokens >= 1.0 else (1.0 - tokens) / rate
+        if wait == 0.0:
+            tokens -= 1.0
+        self.l._conn.execute(
+            "INSERT INTO rate_buckets(key, tokens, updated) VALUES (?, ?, ?) "
+            "ON CONFLICT(key) DO UPDATE SET tokens=excluded.tokens, updated=excluded.updated",
+            (key, tokens, max(now, last)),
+        )
+        return wait
 
     def put_principal(self, did: str, body: dict, tenant: str = "default") -> None:
         self.l._conn.execute(

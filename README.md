@@ -121,7 +121,7 @@ and the receipt, so the agent can act on it instead of retrying. See
 
 - **Transport authentication.** Every endpoint but `/health` requires `Authorization: Bearer mk_<id>_<secret>`. Only the SHA-256 of the secret is stored, comparison is constant time, and an unknown key id takes the same path as a wrong secret.
 - **Tenancy.** Principals, agents, grants, receipts, nonces and routes belong to a tenant; the key decides which one. Another tenant's record reads as *absent*, never as forbidden, so a valid key cannot be used to confirm that an id exists.
-- **Rate limiting.** A per-key token bucket, answering 429 with `Retry-After`.
+- **Rate limiting.** A per-key token bucket, answering 429 with `Retry-After`. The bucket lives in the ledger, so every worker serving one ledger shares it.
 - `create_app()` refuses to build an unauthenticated gateway. That has to be chosen out loud with `auth=OpenAccess()`.
 
 ```bash
@@ -169,11 +169,7 @@ Route and key configuration outside code and CLI, and nonce pruning are not impl
 
 ## Known limitations
 
-HTTPS DNS TOCTOU remains: hostname resolution is reused for SNI and certificate validation. The TLS peer IP is not pinned.
-
 The receipt binds the request body the gateway *committed to sending*. It does not prove the upstream received those bytes; only the response hash speaks to that.
-
-The rate limiter is in-process, so it bounds one gateway process. That matches a ledger that is a single SQLite file on one node.
 
 On timeout or an unknown executor error the state is `EXECUTION_UNKNOWN` and the reservation is kept. Reconciling it is a human decision.
 

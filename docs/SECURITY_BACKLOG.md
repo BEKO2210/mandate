@@ -12,7 +12,7 @@ Covered by G41–G44.
 
 `Route.network_policy` defaults to `"public"`. Loopback/RFC1918 require explicit server-side `"allow_private"`. Metadata hosts and link-local addresses stay blocked even under `allow_private`. Hostnames are resolved with `getaddrinfo`; any blocked address fails closed.
 
-HTTP connections pin the first allowed IP and send the original Host header. HTTPS keeps the hostname for SNI/certificate checks and therefore retains a DNS TOCTOU residual between check and connect.
+HTTP connections pin the first allowed IP and send the original Host header. Since v0.9.0 HTTPS does too: it connects to the validated IP and keeps the hostname for SNI and certificate verification, and proxy environment variables are ignored (G202–G206).
 
 Covered by G45–G52.
 
@@ -148,11 +148,27 @@ the baseline under concurrency.
 
 Covered by G158-G180.
 
+## SH-10 — The policy must hold at the socket, and the limit across workers — DONE in v0.9.0
+
+HTTPS connected by name, so the name was resolved a second time after the
+destination check. A resolver that answered differently the second time sent
+an authorized request to an internal address; TLS did not stop it, because
+whoever controls a name's DNS can hold a certificate for it. HTTPS now
+connects to the checked address and keeps the name for SNI and certificate
+verification. With `HTTPS_PROXY` set, every request went to the proxy, which
+resolved the name itself — proxy variables are now ignored. Certificate
+verification cannot be disabled; a private CA path is loaded at startup.
+
+The rate limit was a dict in one process's memory, so N workers gave a key N
+times its limit. The bucket is now a ledger row. Writing it exposed a latent
+hang: a transaction that failed to begin kept the ledger lock, so the next
+one on any thread waited forever — and `database is locked` is an ordinary
+answer once processes share the file.
+
+Covered by G202–G211.
+
 ## Residual / next
 
-- HTTPS DNS TOCTOU (check then connect by name)
-- No connection-level IP pin for TLS
-- The rate limiter is in-process and bounds one gateway process
 - A chain cannot prove what was removed from its own end; truncation is only
   detectable against a head kept outside the deployment. `mandate chain anchor`
   now writes those heads and `--anchors` checks them, so this is a deployment

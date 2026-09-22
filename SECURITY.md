@@ -36,8 +36,6 @@ In scope:
 Known and documented, so not a finding on their own — see `docs/THREAT_MODEL.md`
 and `docs/SECURITY_BACKLOG.md`:
 
-- HTTPS DNS TOCTOU: the TLS peer IP is not pinned
-- The rate limiter is in-process, so it bounds one gateway process
 - Receipts are chained, but a chain cannot prove what was deleted from its own
   end: detecting truncation requires a head kept outside the deployment
 - The chain is signed by the enforcer key, so a compromise of that key allows

@@ -11,7 +11,7 @@ Forbidden: target_url, destination_url, host, base_url, proxy_url, url, network_
 
 Body limit: 32768 bytes, enforced at ASGI receive before unbounded buffering.
 
-Route destinations default to `network_policy=public`. Loopback/private targets require server-side `allow_private`. HTTPS destination checks resolve DNS before connect but do not pin the TLS peer IP (TOCTOU residual).
+Route destinations default to `network_policy=public`. Loopback/private targets require server-side `allow_private`. The name is resolved once and the connection goes to the address that was checked, for HTTPS as well; SNI and certificate verification still use the name. Proxy environment variables are ignored.
 
 Startup runs `Engine.reconcile_stale_executions()`: receipts left in EXECUTING
 by a process that died are closed as EXECUTION_UNKNOWN, keeping their
@@ -21,6 +21,7 @@ Every endpoint but `/health` requires `Authorization: Bearer mk_<id>_<secret>`.
 The key names a tenant and carries scopes: `intents:write`, `approvals:write`,
 `receipts:read`, or `*`. A missing or invalid key is 401, a valid key without
 the scope is 403, and a key over its rate limit is 429 with `Retry-After`.
+The limit is kept in the ledger, so it holds across every worker serving it.
 A receipt belonging to another tenant answers 404.
 
 Issue keys with `mandate keys new --tenant acme --name ci`; the token is

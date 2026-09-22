@@ -15,6 +15,7 @@ from .auth import (
     AuthContext,
     AuthError,
     Authenticator,
+    LedgerRateLimiter,
     RateLimited,
     RateLimiter,
 )
@@ -47,7 +48,7 @@ def _unauthorized(exc: AuthError) -> HTTPException:
 def create_app(
     engine: Engine,
     auth: Authenticator | None = None,
-    rate_limiter: RateLimiter | None = None,
+    rate_limiter: RateLimiter | LedgerRateLimiter | None = None,
 ) -> FastAPI:
     """Build the gateway.
 
@@ -59,7 +60,9 @@ def create_app(
             "create_app requires an authenticator; pass auth=OpenAccess() "
             "to run unauthenticated for single-tenant development"
         )
-    limiter = rate_limiter if rate_limiter is not None else RateLimiter()
+    # The default limit is shared by every process serving this ledger. An
+    # in-memory one would be multiplied by the number of workers.
+    limiter = rate_limiter if rate_limiter is not None else LedgerRateLimiter(engine.ledger)
 
     def _context(request: Request, scope: str) -> AuthContext:
         try:
