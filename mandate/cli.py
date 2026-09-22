@@ -8,7 +8,7 @@ from datetime import timedelta
 from pathlib import Path
 
 from .auth import issue_api_key, normalize_scopes
-from .crypto import utcnow, verify_object
+from .crypto import sign_object, utcnow, verify_object
 from .examples_runner import run_belkis_demo
 from .ledger import Ledger
 
@@ -292,18 +292,21 @@ def _anchor_problem(record: dict) -> str | None:
     return None
 
 
-def _read_anchors(path: str | None) -> list[dict]:
-    """Heads written down earlier, one JSON object per line.
+def _read_anchors(path: str | None) -> tuple[list[dict], int]:
+    """Heads written down earlier, one JSON object per line; and how many
+    lines were not anchors.
 
     A line that cannot be read is reported and skipped rather than fatal: the
     file lives outside this system's control by design, so a verifier that
     dies on one bad line is a verifier an operator can silence with one bad
-    line. A line that is readable but is not an anchor is reported here, with
-    its number, rather than downstream where the context is gone.
+    line. But skipped is not the same as fine. If the only anchor for a tenant
+    was damaged, what remains checks nothing and a truncated chain would pass;
+    so the count comes back, and `chain verify` fails on any unusable line.
     """
     if not path:
-        return []
+        return [], 0
     out: list[dict] = []
+    bad = 0
     for number, line in enumerate(Path(path).read_text(encoding="utf-8").splitlines(), 1):
         line = line.strip()
         if not line:
@@ -312,16 +315,19 @@ def _read_anchors(path: str | None) -> list[dict]:
             record = json.loads(line)
         except ValueError as exc:
             print(f"  ! anchor file line {number} is unreadable: {exc}")
+            bad += 1
             continue
         if not isinstance(record, dict):
             print(f"  ! anchor file line {number} is not an object")
+            bad += 1
             continue
         problem = _anchor_problem(record)
         if problem:
             print(f"  ! anchor file line {number} {problem}; it is not an anchor")
+            bad += 1
             continue
         out.append(record)
-    return out
+    return out, bad
 
 
 def _chain(args) -> int:
@@ -400,7 +406,7 @@ def _chain(args) -> int:
             return 0
 
         if args.chain_cmd == "verify":
-            anchors = _read_anchors(args.anchors)
+            anchors, unusable = _read_anchors(args.anchors)
             with engine.ledger.tx() as tx:
                 tenants = [args.tenant] if args.tenant else (tx.chain_tenants() or ["default"])
             failed = False
@@ -415,6 +421,13 @@ def _chain(args) -> int:
                 for note in report.notes:
                     print(f"  - {note}")
                 failed = failed or not report.ok
+            if unusable:
+                print(
+                    f"FAILED: {unusable} line(s) of {args.anchors} are not anchors. The "
+                    "chain was checked against the rest, but a damaged anchor file "
+                    "cannot vouch for the chain's end."
+                )
+                failed = True
             if not args.expect_head and not anchors:
                 print(
                     "Note: with neither --expect-head nor --anchors, entries deleted "
@@ -472,7 +485,21 @@ def _gateway(args) -> int:
         try:
             signer = config.build_enforcer_signer()
             if signer is None:
-                print(f"enforcer  : local development key in {config.store / 'enforcer-keys'}")
+                dev_key = config.store / "enforcer-keys" / "enforcer.key"
+                if not dev_key.exists():
+                    print(f"enforcer  : local development key, generated at first start in "
+                          f"{dev_key.parent}")
+                else:
+                    # The key `serve` would load. A damaged one used to pass
+                    # this check and then stop the gateway from starting.
+                    from .signing import FileSigner
+
+                    dev = FileSigner(dev_key)
+                    if not verify_object(sign_object(dev, {"probe": "gateway check"}),
+                                         expected_did=dev.did()):
+                        raise SigningError(f"{dev_key} signs, but not as {dev.did()}")
+                    print("enforcer  : local development key ok, held by this process")
+                    print(f"{'':10}  {dev.did()}")
             else:
                 report = signer.check()
                 held = "held by this process" if report["signer"] == "file" else "held elsewhere"

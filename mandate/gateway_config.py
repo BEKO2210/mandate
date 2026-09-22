@@ -29,7 +29,7 @@ from .executor import UpstreamExecutor
 from .keys import PersistedDevKeyProvider, SignerKeyProvider
 from .ledger import Ledger
 from .routes import ALLOWED_METHODS, INTENT_FIELDS, Operation, Route, RouteConfigError, RouteRegistry
-from .signing import Signer, signer_from_config
+from .signing import Signer, SigningError, check_signer_block, signer_from_config
 from .witness import AnchorSchedule, WitnessError, check_witness_url, token_from_env
 
 ENV_VAR = "MANDATE_GATEWAY_CONFIG"
@@ -188,7 +188,7 @@ def _route(raw: Any, where: str) -> Route:
         kwargs["timeout"] = _seconds(raw["timeout"], f"{where}.timeout")
     if "network_policy" in raw:
         policy = raw["network_policy"]
-        if policy not in {"public", "allow_private"}:
+        if not isinstance(policy, str) or policy not in {"public", "allow_private"}:
             raise GatewayConfigError(f"{where}.network_policy must be public or allow_private")
         kwargs["network_policy"] = policy
     if "operations" in raw:
@@ -230,6 +230,10 @@ def parse_gateway_config(raw: Any, base_dir: str | Path = ".") -> GatewayConfig:
             raise GatewayConfigError("enforcer_signer must be an object naming a signer kind")
         signer = dict(signer)
         _str(signer.get("kind"), "enforcer_signer.kind")
+        try:
+            check_signer_block(signer)
+        except SigningError as exc:
+            raise GatewayConfigError(f"enforcer_signer: {exc}") from exc
         if signer["kind"] == "file" and isinstance(signer.get("path"), str):
             signer["path"] = _relative(base, signer["path"])
 

@@ -401,7 +401,12 @@ def test_g141_an_unknown_signer_kind_names_the_ones_that_exist():
 
 
 def test_g142_the_vault_token_comes_from_the_environment_not_the_config_file():
-    spec = {"kind": "vault-transit", "key": "k", "token": "s.in-the-file"}
+    # A token written into the file used to be ignored; it is now refused,
+    # since a secret in a committed file is a leak whatever reads it.
+    with pytest.raises(SigningError, match=r"unknown keys \['token'\]"):
+        signer_from_config({"kind": "vault-transit", "key": "k", "token": "s.in-the-file"},
+                           env={"VAULT_ADDR": "https://v:8200", "VAULT_TOKEN": "s.from-env"})
+    spec = {"kind": "vault-transit", "key": "k"}
     with pytest.raises(SigningError, match="VAULT_ADDR"):
         signer_from_config(spec, env={})
     signer = signer_from_config(

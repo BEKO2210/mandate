@@ -524,6 +524,41 @@ class FileSigner:
         return {"signer": self.name, "did": self.did(), "published_key": True}
 
 
+#: The keys each signer kind reads. Anything else in a block is refused: a
+#: misspelt `did` used to be ignored and the DID pin silently lost.
+SIGNER_KEYS: dict[str, frozenset[str]] = {
+    "file": frozenset({"kind", "did", "path"}),
+    "aws-kms": frozenset({"kind", "did", "key_id", "region"}),
+    "gcp-kms": frozenset({"kind", "did", "key"}),
+    "vault-transit": frozenset(
+        {"kind", "did", "key", "mount", "address_env", "token_env", "allow_insecure"}
+    ),
+    "command": frozenset({"kind", "did", "argv"}),
+}
+
+
+def check_signer_block(spec: Any) -> None:
+    """Shape of one signer block, without building it or touching the network."""
+    if not isinstance(spec, dict):
+        raise SigningError("signer configuration must be an object")
+    kind = spec.get("kind")
+    if kind not in SIGNER_KEYS:
+        raise SigningError(
+            f"unknown signer kind {kind!r}; use file, aws-kms, gcp-kms, "
+            f"vault-transit or command"
+        )
+    unknown = set(spec) - SIGNER_KEYS[kind]
+    if unknown:
+        raise SigningError(f"{kind} signer has unknown keys {sorted(unknown)}")
+    for name in SIGNER_KEYS[kind] - {"kind", "argv", "allow_insecure"}:
+        if name in spec and not isinstance(spec[name], str):
+            raise SigningError(f"{kind} signer: {name} must be a string")
+    # A string here used to go through bool(): "false" is a non-empty string,
+    # so it switched the HTTP refusal *off* and sent the Vault token in clear.
+    if "allow_insecure" in spec and not isinstance(spec["allow_insecure"], bool):
+        raise SigningError("vault-transit signer: allow_insecure must be true or false")
+
+
 def signer_from_config(spec: dict[str, Any], env: dict[str, str] | None = None) -> Signer:
     """Build a signer from one configuration block.
 
@@ -531,8 +566,7 @@ def signer_from_config(spec: dict[str, Any], env: dict[str, str] | None = None) 
     configuration file can be committed without carrying credentials.
     """
     env = env if env is not None else dict(os.environ)
-    if not isinstance(spec, dict):
-        raise SigningError("signer configuration must be an object")
+    check_signer_block(spec)
     kind = spec.get("kind")
     did = spec.get("did")
 
@@ -575,7 +609,7 @@ def signer_from_config(spec: dict[str, Any], env: dict[str, str] | None = None) 
             key,
             mount=spec.get("mount", "transit"),
             did=did,
-            allow_insecure=bool(spec.get("allow_insecure", False)),
+            allow_insecure=spec.get("allow_insecure", False) is True,
         )
 
     if kind == "command":

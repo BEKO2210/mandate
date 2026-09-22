@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import ipaddress
+import os
 import socket
 import ssl
 from urllib.parse import urlparse
@@ -165,6 +166,15 @@ class UpstreamExecutor:
         self._verify: bool | ssl.SSLContext = (
             ssl.create_default_context(cafile=verify) if isinstance(verify, str) else verify
         )
+        if verify is True:
+            # trust_env=False below turns off proxies, and with them httpx's
+            # reading of SSL_CERT_FILE / SSL_CERT_DIR. A deployment trusting a
+            # private CA that way would silently lose it, so honour the two
+            # CA variables here, where they can only add trust anchors.
+            cafile = os.environ.get("SSL_CERT_FILE") or None
+            capath = os.environ.get("SSL_CERT_DIR") or None
+            if cafile or capath:
+                self._verify = ssl.create_default_context(cafile=cafile, capath=capath)
 
     def forward(
         self, route: Route, method: str, path: str, body: bytes, idempotency_key: str

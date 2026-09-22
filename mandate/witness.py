@@ -43,6 +43,10 @@ def check_witness_url(url: str) -> str:
     parsed = urlparse(url)
     if parsed.scheme not in {"http", "https"} or not parsed.hostname:
         raise WitnessError(f"witness must be an http(s) URL, got {url!r}")
+    try:
+        parsed.port
+    except ValueError as exc:
+        raise WitnessError(f"witness URL has an invalid port: {exc}") from exc
     if parsed.username or parsed.password:
         raise WitnessError("witness URL must not carry credentials; use a token variable")
     if parsed.scheme == "http":
@@ -77,8 +81,13 @@ def post_anchors(
     if token:
         headers["Authorization"] = f"Bearer {token}"
     body = json.dumps({"anchors": anchors}, sort_keys=True).encode("utf-8")
+    # Environment proxies only for https, where the proxy sees a CONNECT and
+    # an encrypted stream it can neither read the token from nor answer for.
+    # Over plain http (loopback only) a proxy would read the token and could
+    # reply 2xx on the witness's behalf.
+    trust_env = urlparse(url).scheme == "https"
     try:
-        with httpx.Client(timeout=timeout, follow_redirects=False) as client:
+        with httpx.Client(timeout=timeout, follow_redirects=False, trust_env=trust_env) as client:
             resp = client.post(url, content=body, headers=headers)
     except httpx.HTTPError as exc:
         raise WitnessError(f"witness unreachable: {type(exc).__name__}: {exc}") from exc

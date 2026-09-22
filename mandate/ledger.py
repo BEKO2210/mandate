@@ -217,15 +217,27 @@ class Ledger:
             )
         if self._schema_version() < 4:
             self._migrate_start_chain()
-        nonce_cols = {row[1] for row in self._conn.execute("PRAGMA table_info(nonces)")}
-        if "consumed_at" not in nonce_cols:
-            # Rows from before this column get the migration time: they are
-            # kept one full retention window from now, never dropped early.
-            self._conn.execute("ALTER TABLE nonces ADD COLUMN consumed_at REAL")
-            self._conn.execute("UPDATE nonces SET consumed_at=?", (time.time(),))
-        self._conn.execute(
-            "CREATE INDEX IF NOT EXISTS nonces_consumed_at ON nonces(consumed_at)"
-        )
+        self._migrate_nonce_timestamps()
+
+    def _migrate_nonce_timestamps(self) -> None:
+        """Checked and altered under one write lock: two workers opening an
+        old ledger together would otherwise both see the column missing, and
+        the second ALTER would fail with a duplicate column and stop it."""
+        self._conn.execute("BEGIN IMMEDIATE")
+        try:
+            cols = {row[1] for row in self._conn.execute("PRAGMA table_info(nonces)")}
+            if "consumed_at" not in cols:
+                # Rows from before this column get the migration time: they
+                # are kept one full retention window from now, never less.
+                self._conn.execute("ALTER TABLE nonces ADD COLUMN consumed_at REAL")
+                self._conn.execute("UPDATE nonces SET consumed_at=?", (time.time(),))
+            self._conn.execute(
+                "CREATE INDEX IF NOT EXISTS nonces_consumed_at ON nonces(consumed_at)"
+            )
+            self._conn.execute("COMMIT")
+        except BaseException:
+            self._conn.execute("ROLLBACK")
+            raise
 
     def _migrate_start_chain(self) -> None:
         """Start the chain, and snapshot the receipts that predate it.

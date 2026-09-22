@@ -998,9 +998,13 @@ class Engine:
         recorded = binding["day"] if binding else (row.get("budget_day") or body.get("budget_day"))
         if budget_day is not None:
             try:
-                datetime.strptime(budget_day, "%Y-%m-%d")
-            except ValueError as exc:
+                canonical = datetime.strptime(budget_day, "%Y-%m-%d").strftime("%Y-%m-%d")
+            except (TypeError, ValueError) as exc:
                 raise MandateError("budget day must be YYYY-MM-DD") from exc
+            # strptime also accepts 2026-9-1; budget rows are keyed 2026-09-01,
+            # so the unpadded form would settle a day that reserved nothing.
+            if canonical != budget_day:
+                raise MandateError(f"budget day must be YYYY-MM-DD, as in {canonical}")
             if recorded and budget_day != recorded:
                 raise MandateError(f"this receipt reserved on {recorded}, not {budget_day}")
         day = recorded or budget_day

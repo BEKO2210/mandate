@@ -69,6 +69,28 @@ against it (G202–G236).
 - The repository is lint-clean and CI runs a pinned ruff. A
   `DeprecationWarning` from this package fails the suite.
 
+### Fixed after review
+
+- **`"allow_insecure": "false"` enabled plain-HTTP Vault.** The string went
+  through `bool()`, so the setting that says "no" switched the refusal off and
+  the Vault token could travel in clear. Signer blocks are now validated per
+  kind: unknown keys (a misspelt `did` lost its pin), wrong types and a
+  non-boolean `allow_insecure` are errors. (G237)
+- A non-canonical `--budget-day` (`2026-9-20`) would settle a day that
+  reserved nothing. (G238)
+- A plain-http witness could be reached through `HTTP_PROXY`, which would read
+  its token and could answer for it; an invalid witness port crashed the CLI.
+  (G239)
+- Ignoring proxy variables also dropped `SSL_CERT_FILE`/`SSL_CERT_DIR`; they
+  are honoured again for upstream verification. (G240)
+- `gateway check` now loads and signs with the development key `serve` would
+  use, instead of only naming its path. (G241)
+- `chain verify --anchors` exits non-zero when any line of the anchor file is
+  not an anchor: a damaged only-anchor used to leave a truncated chain
+  passing. (G242)
+- The nonce-column migration runs under a write lock, so workers opening an
+  old ledger together do not die on a duplicate column. (G243)
+
 ### Changed
 
 - An intent must carry `created_at`.
