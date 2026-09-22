@@ -8,7 +8,7 @@ from .chain import ChainReport, verify_chain
 from .policy import evaluate
 from .signing import Signer, SigningError, signer_from_config
 
-__version__ = "0.7.0"
+__version__ = "0.7.1"
 __all__ = [
     "Engine",
     "OpenAccess",

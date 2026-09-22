@@ -143,12 +143,53 @@ def sign_object(kp: "Signer", obj: dict[str, Any]) -> dict[str, Any]:
 
 
 def verify_object(obj: dict[str, Any], expected_did: str | None = None) -> bool:
-    if "proof" not in obj:
+    """Does this object carry a proof that verifies? Never raise; answer.
+
+    The object may come from a file an auditor was handed or from a database
+    row an operator can write, so every field here is hostile input. A proof
+    that is a list rather than an object used to raise `AttributeError` out of
+    `.get` — which crashed `mandate verify` into a traceback instead of
+    INVALID, and crashed `mandate chain verify` into an empty report. A
+    verifier that dies says nothing, which is worse than the tampering it was
+    asked about. Malformed is simply not verified.
+    """
+    try:
+        return _verify_object(obj, expected_did)
+    except Exception:  # noqa: BLE001 - the contract is to answer, not to raise
+        # One boundary around the whole operation rather than a check per
+        # field. Field checks encode a guess about what malformed input can
+        # do, and the guess keeps being wrong: a non-DID string reaches
+        # `did_to_public_bytes` and raises ValueError before `verify` has a
+        # try block of its own, and a caller passing a dict with non-string
+        # keys makes canonicalisation raise. Every one of those means the
+        # same thing — not verified — and none of them should reach a
+        # caller as a traceback.
+        return False
+
+
+def _verify_object(obj: dict[str, Any], expected_did: str | None) -> bool:
+    """The checks themselves. Free to raise — `verify_object` is the boundary.
+
+    Split out so the fail-closed behaviour lives in exactly one place. Nothing
+    should call this directly: a caller that does gets the exceptions the
+    public function exists to absorb.
+    """
+    if not isinstance(obj, dict) or not isinstance(obj.get("proof"), dict):
         return False
     proof = obj["proof"]
     body = {k: v for k, v in obj.items() if k != "proof"}
     payload = canonical_json(body)
-    signer = expected_did if expected_did else proof.get("verificationMethod", "").split("#")[0]
-    if proof.get("payloadHash") and proof["payloadHash"] != sha256_hex(payload):
+    if expected_did is not None:
+        signer = expected_did
+    else:
+        method = proof.get("verificationMethod")
+        if not isinstance(method, str):
+            return False
+        signer = method.split("#")[0]
+    stored_hash = proof.get("payloadHash")
+    if stored_hash is not None and stored_hash != sha256_hex(payload):
         return False
-    return verify(signer, payload, proof.get("proofValue", ""))
+    value = proof.get("proofValue", "")
+    if not isinstance(value, str):
+        return False
+    return verify(signer, payload, value)

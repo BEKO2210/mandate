@@ -3,6 +3,64 @@
 All notable changes to this project are documented here.
 This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.1] — 2026-09-22
+
+### Fixed
+
+A third review round, on the code that fixed the second round's finding. Two
+more ways to crash the verifier, both the same shape as the one before them
+and both reproduced against a live database: an empty report, and a second,
+ordinary tampering in the same database that went unreported because of it.
+
+- **A proof that is not an object crashed the verifier.** `proof.get(...)` on
+  a list raises `AttributeError`, which is neither `ValueError` nor
+  `TypeError` and so escaped the error boundary. It did the same to
+  `mandate verify` on a file — a traceback where `INVALID` belonged.
+  `verify_object` now answers `False` for anything malformed instead of
+  raising; every field it reads is hostile input by definition. Gate G186.
+- **A deeply nested body crashed the verifier.** `RecursionError` escaped the
+  boundary the same way. Gates G187, G188 — the first pins the behaviour for a
+  body no interpreter can parse, the second checks that a body one *can* parse
+  is still reconciled, because how deep is too deep is an interpreter detail
+  (3.11 gives up at 1000, 3.13 reads 20000) and a gate written around one
+  version's limit is a hole on another's.
+- **The boundary now catches every exception, not a list of them.** Naming the
+  expected ones encodes a guess about what hostile bytes can do, and that
+  guess has been wrong three times running: `UnicodeEncodeError`,
+  `AttributeError`, `RecursionError`. Failing there is conservative — the row
+  becomes a finding and the run continues — so breadth costs nothing and
+  narrowness costs the whole report.
+
+- **A malformed DID still escaped, after the first fix.** `verify` decodes the
+  DID before its own `try`, so a `verificationMethod` that is a string but not
+  a `did:key` — `"not-a-did"`, an empty string, a `did:web` — raised
+  `ValueError` out of `verify_object`. `mandate chain verify` survived it on
+  the row boundary; `mandate verify` on a file did not, and produced exactly
+  the traceback this release set out to remove. The whole operation now fails
+  closed behind one boundary rather than a check per field: checking fields
+  encodes a guess about what malformed input can do, and that guess was wrong
+  again. Gates G186, G189.
+
+- **G189 proved less than it looked like it proved.** It asserted the exit
+  status alone, so a `mandate verify` that printed `VALID` and returned 1
+  would have satisfied it. It now asserts the printed verdict in both
+  directions — `INVALID` for each hostile file, and `VALID` with exit 0 for a
+  genuine one, without which the gate is satisfied by a command that condemns
+  everything. A test that overstates what it checks is the same failure as a
+  verifier that says nothing.
+
+- **Three gates established a failure, but not the failure they claimed.**
+  G188 asserted that the report was not OK and that an unrelated rollback was
+  still visible — a verifier that ignored the edited body entirely would have
+  passed it. G176's second variant asserted only `not ok`, where the claim is
+  that the links break at a named position. G189's positive case signed a
+  hand-built dict rather than using a receipt from the pipeline, and allowed a
+  caught traceback on stderr. All three now assert the content they are about.
+  Asking whether other gates had the same shape was worth more than any single
+  fix in this release.
+
+Gates G186-G189. Full suite: 210 passed on Python 3.11 and 3.13.
+
 ## [0.7.0] — 2026-09-22
 
 ### Added

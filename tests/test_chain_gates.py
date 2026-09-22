@@ -1,4 +1,4 @@
-"""v0.7.0 receipt-chain gates G158-G185.
+"""v0.7.0 receipt-chain gates G158-G189.
 
 Signatures proved who wrote each receipt. They proved nothing about the set of
 receipts: an operator with database access could delete a row, roll a state
@@ -20,7 +20,7 @@ from datetime import timedelta
 import pytest
 
 from mandate import chain as chainlib
-from mandate.crypto import KeyPair, utcnow
+from mandate.crypto import KeyPair, utcnow, verify_object
 from mandate.engine import Engine
 from mandate.executor import ExecutionResult
 from mandate.ledger import Ledger, StorageError
@@ -402,7 +402,13 @@ def test_g176_balancing_the_receipt_count_does_not_hide_a_swap(tmp_path):
     engine, db, ids, _ = _world(tmp_path / "b", calls=4)
     _sql(db, "DELETE FROM chain WHERE receipt_id=?", ids[1])
     _sql(db, "DELETE FROM receipts WHERE id=?", ids[1])
-    assert not engine.verify_chain().ok
+    report = engine.verify_chain()
+    assert not report.ok
+    # Named, not merely counted: "not ok" is satisfied by any finding at all,
+    # including one that has nothing to do with the links this variant claims
+    # to break. Review found this shape in G188 and here.
+    assert report.broken_at == 4, report
+    assert "expected seq 4" in (report.reason or ""), report
 
     # 3. Do it at the tail, where the links survive: the count catches it.
     engine, db, ids, _ = _world(tmp_path / "c", calls=4)
@@ -671,3 +677,164 @@ def test_g185_json_that_no_conforming_parser_reads_back_is_refused():
         chainlib.loads_strict('{"outer": {"text": "\\udc00"}}')
     # A paired surrogate is an ordinary character and must still be readable.
     assert chainlib.loads_strict('{"text": "\\ud83d\\ude00"}') == {"text": "\U0001f600"}
+
+
+def _poisoned_world(tmp_path, mutate):
+    """One receipt poisoned, and a second one tampered with ordinarily.
+
+    The second is the point. A verifier that dies on the first says nothing
+    about the rest of the database, so every one of these gates asserts that
+    the *ordinary* finding survives the poisoned row.
+    """
+    engine, db, ids, _ = _world(tmp_path, calls=3)
+    engine.ledger.close()
+    con = sqlite3.connect(db)
+    con.row_factory = sqlite3.Row
+    raw = con.execute("SELECT body FROM receipts WHERE id=?", (ids[0],)).fetchone()["body"]
+    con.close()
+    _sql(db, "UPDATE receipts SET body=? WHERE id=?", mutate(raw), ids[0])
+    _sql(db, "UPDATE receipts SET state='DENIED' WHERE id=?", ids[1])
+
+    engine = Engine(ledger=Ledger(db))
+    try:
+        return engine.verify_chain("default")
+    finally:
+        engine.ledger.close()
+
+
+def test_g186_a_proof_that_is_not_an_object_is_answered_not_raised(tmp_path):
+    """`proof.get` on a list raises AttributeError, which escaped the boundary.
+
+    It emptied the whole report, and it did the same to `mandate verify` on a
+    file — a traceback where INVALID belonged. Hostile input reaching a
+    verifier is the normal case, not the exceptional one.
+    """
+    for hostile in ([], "nope", 7, {"verificationMethod": 7},
+                    {"verificationMethod": "did:key:z6Mk", "proofValue": []},
+                    # A *string* that is not a DID reaches did_to_public_bytes,
+                    # which raises before `verify` has a try block of its own.
+                    # Review found this one after the first fix: checking each
+                    # field encodes a guess about what malformed input can do.
+                    {"verificationMethod": "not-a-did", "proofValue": ""},
+                    {"verificationMethod": "", "proofValue": ""},
+                    {"verificationMethod": "did:web:example.com", "proofValue": ""},
+                    {"verificationMethod": "did:key:zZZZZ", "proofValue": ""}):
+        assert verify_object({"id": "x", "proof": hostile}) is False, hostile
+    assert verify_object(["not", "a", "dict"]) is False
+    # A direct caller can make canonicalisation itself raise.
+    assert verify_object({"id": "x", 1: "non-string key",
+                          "proof": {"verificationMethod": "did:key:z6Mk",
+                                    "proofValue": ""}}) is False
+
+    def mutate(raw):
+        """Replace the proof with a list, so `.get` has nothing to answer."""
+        body = json.loads(raw)
+        body["proof"] = []
+        return json.dumps(body)
+
+    report = _poisoned_world(tmp_path, mutate)
+    assert not report.ok
+    assert any("DENIED" in m for m in report.mismatches), (
+        "the poisoned row must not cost the finding about the other receipt"
+    )
+
+
+def test_g187_a_deeply_nested_body_is_a_finding_not_a_crash(tmp_path):
+    """RecursionError is neither ValueError nor TypeError, so it escaped too.
+
+    An operator writes bytes, not Python objects: the nesting goes in as text
+    and the parser blows the stack on the way in.
+
+    The depth is far past any interpreter's limit on purpose. How deep is too
+    deep is an interpreter detail — 3.11 gives up at 1000 and 3.13 parses
+    20000 — so the gate pins the behaviour, never the threshold: a body the
+    parser cannot handle is reported, and the run survives it.
+    """
+    deep = '{"a":' * 25000 + "1" + "}" * 25000
+
+    def mutate(raw):
+        """Append nesting past any interpreter's limit, as raw text."""
+        return raw[:-1] + ',"pad":' + deep + "}"
+
+    report = _poisoned_world(tmp_path, mutate)
+    assert not report.ok
+    assert any("cannot be read" in m for m in report.mismatches), report.mismatches
+    assert any("DENIED" in m for m in report.mismatches), (
+        "the poisoned row must not cost the finding about the other receipt"
+    )
+
+
+def test_g188_a_body_the_interpreter_can_parse_is_still_reconciled(tmp_path):
+    """The other half: depth that parses must not become a free edit.
+
+    3.13 reads 3000-deep nesting happily. That body is still a changed body,
+    so the canonical hash has to catch it — otherwise a gate written around
+    one interpreter's stack limit would leave a hole on another's.
+    """
+    def mutate(raw):
+        """Append nesting every interpreter parses, so the hash must catch it."""
+        return raw[:-1] + ',"pad":' + ('{"a":' * 500 + "1" + "}" * 500) + "}"
+
+    report = _poisoned_world(tmp_path, mutate)
+    assert not report.ok
+    # The claim is that the *changed body* is caught. Asserting "not ok" and
+    # the unrelated rollback would be satisfied by a verifier that ignored the
+    # edit entirely — the same assertion-shape defect G189 had.
+    assert any("contents changed after it was chained" in m
+               for m in report.mismatches), report.mismatches
+    assert any("DENIED" in m for m in report.mismatches), report.mismatches
+
+
+def test_g189_the_file_verifier_says_invalid_instead_of_crashing(tmp_path, capsys):
+    """`mandate verify` is the command an auditor runs on a file they were sent.
+
+    A traceback there is not a verdict. The file is hostile input by
+    definition — it is the thing being questioned — so every malformed shape
+    has to come back as INVALID with a non-zero exit, not as a stack trace
+    that says nothing about whether the receipt is genuine.
+
+    The printed word is asserted, not only the exit code. An earlier version
+    of this gate checked the status alone and would have passed a command
+    that printed VALID and returned 1 — a test that proves less than it looks
+    like it proves, which in evidence code is the same failure as a verifier
+    that says nothing. Review caught it.
+    """
+    from mandate.cli import main
+
+    hostile = [
+        {"id": "x", "proof": {"verificationMethod": "not-a-did", "proofValue": ""}},
+        {"id": "x", "proof": {"verificationMethod": "did:web:example.com",
+                              "proofValue": ""}},
+        {"id": "x", "proof": []},
+        {"id": "x"},
+    ]
+    for i, obj in enumerate(hostile):
+        path = tmp_path / f"hostile-{i}.json"
+        path.write_text(json.dumps(obj), encoding="utf-8")
+        assert main(["verify", str(path)]) == 1, obj
+        captured = capsys.readouterr()
+        assert captured.out == "INVALID\n", obj
+        # A caught traceback on stderr is still a traceback. The verdict is
+        # the whole output, not the part that happens to be on stdout.
+        assert captured.err == "", obj
+
+    # The other half: a genuine receipt must still come back VALID and 0, or
+    # the gate above is satisfied by a command that condemns everything.
+    #
+    # It is a receipt from the pipeline, not a hand-built dict handed to
+    # `sign_object`. `sign_object` signs any dictionary, so signing one here
+    # would prove that a valid signature verifies — true, and not the claim.
+    # The claim is that what this system actually produces still passes.
+    # Review caught the substitution.
+    engine, db, ids, _ = _world(tmp_path / "genuine-world", calls=1)
+    engine.ledger.close()
+    con = sqlite3.connect(db)
+    con.row_factory = sqlite3.Row
+    stored = con.execute("SELECT body FROM receipts WHERE id=?", (ids[0],)).fetchone()
+    con.close()
+    good = tmp_path / "genuine.json"
+    good.write_text(stored["body"], encoding="utf-8")
+    assert main(["verify", str(good)]) == 0
+    captured = capsys.readouterr()
+    assert captured.out == "VALID\n"
+    assert captured.err == ""
