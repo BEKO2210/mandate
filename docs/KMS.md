@@ -126,6 +126,24 @@ says what to do, rather than passing an AWS error code up. In practice:
   intent, so lower `MAX_CONTEXT_BYTES`, or use Vault transit, Cloud KMS or a
   command signer, none of which have a comparable limit.
 
+The dangerous case was the enforcer key. The claim signed before dispatch
+could fit while the result signed after it did not: the result adds the
+status, the response hash and the executor's error text, which was
+unbounded. The request went out, the outcome could not be signed, and the
+receipt sat in EXECUTING until a restart made it EXECUTION_UNKNOWN. Two
+changes close that:
+
+* Error text in a receipt is printable ASCII without characters JSON escapes,
+  at most 200 characters — one byte per character, whatever the upstream said.
+* Before dispatch, the engine signs nothing it cannot finish. It builds the
+  largest body it could ever sign for this execution — result, reconciler,
+  and a resolution of 32 + 128 ASCII characters on top — and if that exceeds
+  the enforcer signer's cap, the receipt goes AUTHORIZED → DENIED with the
+  sizes in its reason, the reservation is released, and nothing is sent.
+
+That leaves about 840 bytes of context (measured) for an
+enforcer on AWS KMS. Signers without a cap are unaffected.
+
 ## Two invariants
 
 **Every remote signature is verified before it is returned.** An Ed25519 verify

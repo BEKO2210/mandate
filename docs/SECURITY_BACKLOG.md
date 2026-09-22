@@ -200,6 +200,19 @@ the operator names — never a guess, and never overriding a recorded day.
 
 Covered by G220–G225.
 
+## SH-13 — Nothing may be sent whose outcome cannot be signed — DONE in v0.9.0
+
+With the enforcer key on AWS KMS (4096-byte cap), a receipt whose claim fit
+could produce a result that did not: the executor's error text was unbounded.
+Reproduced with a 1100-byte context and a verbose 502 — the request was sent,
+the outcome could not be signed, and the receipt stayed EXECUTING until the
+next restart. Error text is now bounded to 200 one-byte characters, and before
+dispatch the engine sizes the largest body it could ever sign for the
+execution; if that exceeds the signer's cap the receipt is DENIED and nothing
+is sent.
+
+Covered by G226–G228.
+
 ## Residual / next
 
 - A chain cannot prove what was removed from its own end; truncation is only
@@ -218,9 +231,9 @@ Covered by G220–G225.
   nobody signed is still a finding
 - The request hash binds what the gateway sent, not what the upstream received
 - A key manager does not bound a live compromise of the signing process
-- AWS KMS caps a signed message at 4096 bytes, which a receipt with a large
-  context exceeds; the signer refuses rather than falling back to a digest,
-  because the digest variant would not verify as `did:key`
+- AWS KMS caps a signed message at 4096 bytes. An execution whose receipt
+  could exceed it is refused before dispatch, so the cost is capacity — less
+  room for context — not a lost outcome
 - Without `principal_signer`, `mcp init` writes the grant-issuing key to the
   store as a development file; that is a default an operator has to change
 - Resolving an EXECUTION_UNKNOWN receipt records an operator's finding; the

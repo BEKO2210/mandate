@@ -10,7 +10,7 @@ from uuid import uuid4
 
 from . import chain as chainlib
 from . import disclosure as disc
-from .crypto import KeyPair, iso, sign_object, utcnow, verify_object
+from .crypto import KeyPair, canonical_json, iso, sign_object, utcnow, verify_object
 from .auth import DEFAULT_TENANT
 from .executor import ExecutionResult
 from .keys import EphemeralKeyProvider, KeyProvider, PersistedDevKeyProvider
@@ -38,6 +38,55 @@ from .validate import (
 
 # A claimed execution older than this is no longer in flight in this process.
 DEFAULT_EXECUTION_STALE_AFTER_S = 900
+
+#: An executor's error text goes into a signed receipt. It used to go in
+#: whole, so an upstream with a verbose error could push the receipt past
+#: its signer's message cap *after* the call had been made: the real outcome
+#: was lost and the receipt sat in EXECUTING until the next restart.
+ERROR_LIMIT = 200
+
+#: The smallest resolution the pre-dispatch size check keeps room for, so an
+#: unknown outcome can always be resolved with at least this much plain ASCII.
+_RESOLUTION_RESERVE = {"operator": 32, "reason": 128}
+
+
+def bounded_error(text: Any) -> str | None:
+    """Printable ASCII without characters JSON escapes, at most ERROR_LIMIT
+    long: exactly one byte per character in the signed receipt, whatever the
+    upstream said."""
+    if text is None:
+        return None
+    clean = "".join(
+        ("'" if ch in "\"\\" else ch) if " " <= ch <= "~" else "?" for ch in str(text)
+    )
+    return clean if len(clean) <= ERROR_LIMIT else clean[: ERROR_LIMIT - 3] + "..."
+
+
+def _largest_outcome(claim: dict[str, Any]) -> dict[str, Any]:
+    """A body at least as large as any the engine may sign for this claim
+    after dispatch: the result, a reconciler's EXECUTION_UNKNOWN, and a
+    resolution on top of either. Every variable field is at its maximum."""
+    body = dict(claim)
+    body["outcome"] = "EXECUTION_UNKNOWN"
+    execution = dict(claim["execution"])
+    execution.update(
+        state="EXECUTION_UNKNOWN",
+        http_status=999,
+        latency_ms=10**9,
+        response_hash="f" * 64,
+        error="x" * ERROR_LIMIT,  # bounded_error makes every character one byte
+        reconciled_at="0000-00-00T00:00:00Z",
+        resolution={
+            "from": "EXECUTION_UNKNOWN",
+            "decided": "EXECUTION_FAILED",
+            "by": "x" * _RESOLUTION_RESERVE["operator"],
+            "reason": "x" * _RESOLUTION_RESERVE["reason"],
+            "at": "0000-00-00T00:00:00Z",
+            "budget_day": "0000-00-00",
+        },
+    )
+    body["execution"] = execution
+    return body
 
 
 class MandateError(Exception):
@@ -795,6 +844,14 @@ class Engine:
                     "started_at": started,
                     "request": request_meta,
                 }
+                # Everything signed after dispatch must fit what the signer
+                # can sign, or the outcome of a call that was made cannot be
+                # recorded. That is decided now, while refusing costs nothing.
+                cap = getattr(self.enforcer, "MAX_MESSAGE", None)
+                if cap is not None:
+                    size = len(canonical_json(_largest_outcome(claim)))
+                    if size > cap:
+                        return self._deny_unsendable(tx, tenant, receipt_id, body, size, cap)
                 signed_claim = sign_object(self.enforcer, claim)
                 if not tx.cas_state(
                     receipt_id, "AUTHORIZED", "EXECUTING", signed_claim,
@@ -841,7 +898,7 @@ class Engine:
                     "predecessor_id": receipt_id,
                     "started_at": started,
                     "request": request_meta,
-                    "error": result.error,
+                    "error": bounded_error(result.error),
                 }
                 signed = sign_object(self.enforcer, new_body)
                 dst = result.state
@@ -890,6 +947,32 @@ class Engine:
                 "the call was dispatched but its outcome could not be recorded",
                 receipt_id,
             ) from exc
+
+    def _deny_unsendable(
+        self, tx, tenant: str, receipt_id: str, body: dict, size: int, cap: int,
+    ) -> dict[str, Any]:
+        """AUTHORIZED -> DENIED before dispatch, releasing the reservation."""
+        denied = {k: v for k, v in body.items() if k != "proof"}
+        denied["outcome"] = "DENIED"
+        denied["decision"] = {
+            "allowed": False,
+            "requires_human": False,
+            "reasons": [
+                f"the receipt could reach {size} bytes after dispatch and the enforcer "
+                f"signer can sign at most {cap}; nothing was sent"
+            ],
+        }
+        signed = sign_object(self.enforcer, denied)
+        if not tx.cas_state(
+            receipt_id, "AUTHORIZED", "DENIED", signed,
+            chain=self._chain(tx, tenant, receipt_id, "DENIED", signed),
+        ):
+            raise MandateError("authorization already consumed")
+        row = tx.get_receipt(receipt_id)
+        gid, curr, day, amount = self._settlement(tx, row, body)
+        tx.release_budget(gid, curr, day, amount)
+        tx.audit("execution.refused", {"receipt_id": receipt_id, "size": size, "cap": cap}, receipt_id)
+        return signed
 
     def _settlement(
         self, tx, row, body: dict, budget_day: str | None = None,
@@ -1010,7 +1093,10 @@ class Engine:
         except StorageError as exc:
             raise MandateError("storage error") from exc
         except SigningError as exc:
-            raise MandateError("the resolution could not be signed") from exc
+            # Operator-facing, so the signer's reason is useful here: a cap
+            # is met by a shorter reason, which the pre-dispatch check keeps
+            # room for.
+            raise MandateError(f"the resolution could not be signed: {exc}") from exc
 
     def _is_stale(self, started_at: str | None) -> bool:
         cutoff = self._now() - timedelta(seconds=self.execution_stale_after_s)
@@ -1027,7 +1113,9 @@ class Engine:
         new_body = {k: v for k, v in body.items() if k != "proof"}
         new_body["outcome"] = "EXECUTION_UNKNOWN"
         execution = dict(new_body.get("execution") or {})
-        execution.update(state="EXECUTION_UNKNOWN", error=reason, reconciled_at=iso(self._now()))
+        execution.update(
+            state="EXECUTION_UNKNOWN", error=bounded_error(reason), reconciled_at=iso(self._now())
+        )
         new_body["execution"] = execution
         signed = sign_object(self.enforcer, new_body)
         # Reconciliation sweeps every tenant, so the tenant comes off the row
