@@ -144,6 +144,11 @@ changes close that:
 That leaves about 840 bytes of context (measured) for an
 enforcer on AWS KMS. Signers without a cap are unaffected.
 
+The reserve guarantees that a short finding always fits: 32 characters of
+operator and 128 of reason, plain ASCII. A longer one may still fit; if it
+does not, `resolve` measures it before the key manager is asked and says how
+many bytes to cut, and nothing is changed.
+
 ## Two invariants
 
 **Every remote signature is verified before it is returned.** An Ed25519 verify

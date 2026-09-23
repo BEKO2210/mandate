@@ -100,6 +100,10 @@ against it (G202–G236).
 - A malformed URL (an unclosed `[`) is a configuration error, not a crash.
   (G246)
 - An IPv6 upstream gets a bracketed `Host` header. (G247)
+- A resolution too long for a capped enforcer signer is measured before the
+  key manager is asked, and the error says how many bytes to cut; nothing is
+  changed. The pre-dispatch check keeps room for a 32 + 128 character
+  finding, not for the longest one accepted. (G248)
 
 ### Changed
 

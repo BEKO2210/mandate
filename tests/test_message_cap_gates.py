@@ -1,4 +1,4 @@
-"""Signer message-cap gates G226-G228.
+"""Signer message-cap gates G226-G228 and G248.
 
 AWS KMS signs at most 4096 bytes. The claim signed before dispatch could fit
 while the result signed after it did not — the result adds the status, the
@@ -131,3 +131,22 @@ def test_g228_an_error_costs_one_byte_per_character_and_at_most_the_limit():
     assert len(weird) == ERROR_LIMIT and weird.endswith("...")
     assert all(" " <= ch <= "~" and ch not in '"\\' for ch in weird)
     assert len(canonical_json(weird)) == len(weird) + 2  # just the two quotes
+
+
+def test_g248_a_resolution_too_long_for_the_signer_says_by_how_much(tmp_path):
+    """The pre-dispatch check keeps room for a short finding, not the longest
+    accepted one. A longer finding used to fail inside the key manager with
+    its error; it is now measured first, and nothing is changed."""
+    upstream = Recording(ExecutionResult("EXECUTION_UNKNOWN", None, 5, None, "timeout"))
+    engine, akp, grant = _kms_world(tmp_path, upstream)
+    rec = _submit(engine, akp, grant, 800)
+    assert engine.execute(rec["id"])["outcome"] == "EXECUTION_UNKNOWN"
+    calls = len(engine.enforcer._client.calls)
+
+    with pytest.raises(MandateError, match=r"shorten the reason or operator by \d+ bytes"):
+        engine.resolve_unknown(rec["id"], "EXECUTION_FAILED", operator="B", reason="r" * 2000)
+    assert len(engine.enforcer._client.calls) == calls, "the key manager was not even asked"
+    assert engine.unknown_receipts()[0]["id"] == rec["id"]
+
+    out = engine.resolve_unknown(rec["id"], "EXECUTION_FAILED", operator="x" * 32, reason="y" * 128)
+    assert out["outcome"] == "EXECUTION_FAILED"

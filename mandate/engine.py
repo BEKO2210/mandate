@@ -1086,6 +1086,20 @@ class Engine:
                     "budget_day": day,
                 }
                 new_body["execution"] = execution
+                # The pre-dispatch check reserved room for a short finding
+                # (_RESOLUTION_RESERVE), not for the longest one accepted
+                # here. Measure before asking the signer, so an operator who
+                # wrote too much is told by how much instead of getting a
+                # key manager's refusal.
+                cap = getattr(self.enforcer, "MAX_MESSAGE", None)
+                if cap is not None:
+                    size = len(canonical_json(new_body))
+                    if size > cap:
+                        raise MandateError(
+                            f"this resolution would be {size} bytes and the enforcer signer "
+                            f"signs at most {cap}; shorten the reason or operator by "
+                            f"{size - cap} bytes. Nothing was changed."
+                        )
                 signed = sign_object(self.enforcer, new_body)
                 if not tx.cas_state(
                     receipt_id, "EXECUTION_UNKNOWN", outcome, signed,
