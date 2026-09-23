@@ -252,7 +252,9 @@ Covered by G249–G250.
 `counterparties_allow` was checked only `if intent.counterparty`. An MCP call
 that simply left its vendor argument out reached the upstream under a grant
 that named the only vendors it could pay. A grant with an allow-list now
-denies an intent without a counterparty, and a tool mapped with
+denies an intent that carries an amount but names no counterparty — a call
+that moves no money pays nobody and is not the list's to refuse — and a tool
+mapped with
 `counterparty_from` refuses the call when the argument is missing, empty, or
 longer than the field can hold — cut to fit, the value judged would not be
 the value sent. A deny-list still applies only to a named counterparty; it

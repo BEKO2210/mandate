@@ -87,10 +87,12 @@ def evaluate(
             reasons.append(f"counterparty {intent.counterparty} is denied")
         if allow and intent.counterparty not in allow:
             reasons.append(f"counterparty {intent.counterparty} not in allow-list")
-    elif allow:
-        # An allow-list names who may be paid. Leaving the name out is not a
-        # way past it. (A deny-list cannot say "unknown is bad", so it stays
-        # consulted only when there is a name to consult it with.)
+    elif allow and intent.amount is not None:
+        # An allow-list names who may be paid, so a payment that names no
+        # payee is not a way past it. A call that moves no money — reading a
+        # catalogue — pays nobody, and is not the list's to refuse. (A
+        # deny-list cannot say "unknown is bad", so it stays consulted only
+        # when there is a name to consult it with.)
         reasons.append("counterparty required by the grant's allow-list")
 
     requires_human = False

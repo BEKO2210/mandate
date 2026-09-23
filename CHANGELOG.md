@@ -15,9 +15,11 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `created_at`; `Engine.approve` has always set it. (G249, G250)
 - **A counterparty allow-list could be passed by naming no counterparty.**
   The list was consulted only when an intent carried one. A grant with
-  `counterparties_allow` now denies an intent without a counterparty, and an
-  MCP tool configured with `counterparty_from` refuses a call whose
-  argument is missing, empty, or too long to judge as sent. (G251, G252)
+  `counterparties_allow` now denies an intent that carries an amount but no
+  counterparty — a payment to nobody named — while a call that moves no
+  money is not the list's to refuse. An MCP tool configured with
+  `counterparty_from` refuses a call whose argument is missing, empty, or too
+  long to judge as sent. (G251, G252)
 
 ## [0.9.0] — 2026-09-22
 

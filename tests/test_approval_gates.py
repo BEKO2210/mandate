@@ -108,12 +108,15 @@ def test_g251_an_allow_list_is_not_passed_by_leaving_the_counterparty_out(tmp_pa
         named = engine.submit_intent(_intent(
             akp, grant["id"], action="purchase.office", amount=10, counterparty="paper-co.example",
         ))
+        moves_no_money = engine.submit_intent(_intent(akp, grant["id"], action="purchase.office"))
     finally:
         dummy.stop()
 
     assert unnamed["outcome"] == "DENIED"
     assert "counterparty required by the grant's allow-list" in unnamed["decision"]["reasons"]
     assert named["outcome"] == "AUTHORIZED", named["decision"]["reasons"]
+    # The list names who may be paid; a call that pays nobody is not its to refuse.
+    assert moves_no_money["outcome"] == "AUTHORIZED", moves_no_money["decision"]["reasons"]
 
 
 def test_g252_a_tool_call_without_its_counterparty_is_not_signed(tmp_path):
