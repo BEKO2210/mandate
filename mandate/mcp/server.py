@@ -15,6 +15,7 @@ way to provide.
 from __future__ import annotations
 
 import sys
+from contextlib import asynccontextmanager
 from datetime import timedelta
 from pathlib import Path
 from typing import Any
@@ -145,6 +146,20 @@ def load_agent_signer(config: GuardConfig) -> Signer:
     return FileSigner(path)
 
 
+def load_principal_signer(config: GuardConfig) -> Signer:
+    """The key that approves held calls: the one that issued the grant."""
+    configured = config.build_principal_signer()
+    if configured is not None:
+        return configured
+    path = config.store_path / "keys" / "principal.key"
+    if not path.exists():
+        raise FileNotFoundError(
+            f"{path} is missing; the principal key is held elsewhere or the guard "
+            f"was never initialized (`mandate mcp init --config <file>`)"
+        )
+    return FileSigner(path)
+
+
 def make_server(name: str, tools: list[Any], guard: McpGuard):
     """Re-expose `tools`, each call routed through the guard."""
     import anyio
@@ -181,11 +196,11 @@ def make_server(name: str, tools: list[Any], guard: McpGuard):
     return server
 
 
-async def serve(config: GuardConfig) -> None:
-    """Connect to the upstream, mirror its tools, and serve the guard on stdio."""
+@asynccontextmanager
+async def upstream_session(config: GuardConfig):
+    """Start the upstream MCP server and yield (session, its tools)."""
     from mcp import ClientSession, StdioServerParameters
     from mcp.client.stdio import stdio_client
-    from mcp.server.stdio import stdio_server
 
     params = StdioServerParameters(
         command=config.upstream.command,
@@ -197,61 +212,95 @@ async def serve(config: GuardConfig) -> None:
         async with ClientSession(read, write) as session:
             await session.initialize()
             listed = await session.list_tools()
-            names = [t.name for t in listed.tools]
-            exposed, hidden = _partition(config, names)
-            if hidden:
-                log(f"not exposing unmapped tools: {', '.join(hidden)}")
-            if not exposed:
-                raise SystemExit(
-                    "none of the upstream tools are mapped; nothing to expose"
-                )
-            log(f"exposing {len(exposed)} of {len(names)} upstream tools")
+            yield session, listed.tools
 
-            try:
-                engine, executor = build_engine(config, session.call_tool, exposed)
-                # `Engine` asks the enforcer for its DID, which a remote signer
-                # can answer from a published public key without being able to
-                # sign at all. Receipts are signed with this key, so prove it
-                # signs before any tool is exposed.
-                enforcer_check = getattr(engine.enforcer, "check", None)
-                if callable(enforcer_check):
-                    enforcer_check()
-                state = read_state(config) or bootstrap(config, engine)
-                signer = load_agent_signer(config)
-            except SigningError as exc:
-                # Includes the enforcer key: `Engine` asks it for its DID while
-                # being constructed, so a broken one fails here.
-                raise SystemExit(f"cannot start: {exc}")
-            # Prove the key works before the model can ask for anything. A
-            # signer that is only discovered to be broken on the first tool
-            # call has already cost a call and told the model nothing useful.
-            try:
-                check = getattr(signer, "check", None)
-                report = check() if callable(check) else {
-                    "signer": type(signer).__name__, "did": signer.did()
-                }
-            except SigningError as exc:
-                raise SystemExit(f"agent signer is unusable: {exc}")
-            if report.get("did") not in (None, state["agent_did"]):
-                raise SystemExit(
-                    f"the configured signer holds {report['did']}, but the grant was "
-                    f"issued to {state['agent_did']}; intents would be refused"
-                )
-            guard = McpGuard(
-                engine=engine,
-                agent_signer=signer,
-                grant_id=state["grant_id"],
-                mapping=config.mapping,
-                tenant=config.tenant,
-                executor=executor,
+
+def open_guard(config: GuardConfig, call_tool, exposed: list[str]) -> tuple[McpGuard, dict[str, str]]:
+    """The engine and guard for these upstream tools, with every key proven."""
+    try:
+        engine, executor = build_engine(config, call_tool, exposed)
+        # `Engine` asks the enforcer for its DID, which a remote signer
+        # can answer from a published public key without being able to
+        # sign at all. Receipts are signed with this key, so prove it
+        # signs before any tool is exposed.
+        enforcer_check = getattr(engine.enforcer, "check", None)
+        if callable(enforcer_check):
+            enforcer_check()
+        state = read_state(config) or bootstrap(config, engine)
+        signer = load_agent_signer(config)
+    except SigningError as exc:
+        # Includes the enforcer key: `Engine` asks it for its DID while
+        # being constructed, so a broken one fails here.
+        raise SystemExit(f"cannot start: {exc}")
+    # Prove the key works before the model can ask for anything. A
+    # signer that is only discovered to be broken on the first tool
+    # call has already cost a call and told the model nothing useful.
+    try:
+        check = getattr(signer, "check", None)
+        report = check() if callable(check) else {
+            "signer": type(signer).__name__, "did": signer.did()
+        }
+    except SigningError as exc:
+        raise SystemExit(f"agent signer is unusable: {exc}")
+    if report.get("did") not in (None, state["agent_did"]):
+        raise SystemExit(
+            f"the configured signer holds {report['did']}, but the grant was "
+            f"issued to {state['agent_did']}; intents would be refused"
+        )
+    guard = McpGuard(
+        engine=engine,
+        agent_signer=signer,
+        grant_id=state["grant_id"],
+        mapping=config.mapping,
+        tenant=config.tenant,
+        executor=executor,
+    )
+    log(f"agent key: {report.get('signer', 'file')} ({state['agent_did']})")
+    log(f"grant {state['grant_id']} for tenant {config.tenant}")
+    return guard, state
+
+
+async def serve(config: GuardConfig) -> None:
+    """Connect to the upstream, mirror its tools, and serve the guard on stdio."""
+    from mcp.server.stdio import stdio_server
+
+    log(f"store: {config.store_path.resolve()}")
+    async with upstream_session(config) as (session, upstream_tools):
+        names = [t.name for t in upstream_tools]
+        exposed, hidden = _partition(config, names)
+        if hidden:
+            log(f"not exposing unmapped tools: {', '.join(hidden)}")
+        if not exposed:
+            raise SystemExit(
+                "none of the upstream tools are mapped; nothing to expose"
             )
-            log(f"agent key: {report.get('signer', 'file')} ({state['agent_did']})")
-            log(f"grant {state['grant_id']} for tenant {config.tenant}")
+        log(f"exposing {len(exposed)} of {len(names)} upstream tools")
+        guard, _ = open_guard(config, session.call_tool, exposed)
 
-            tools = [t for t in listed.tools if t.name in set(exposed)]
-            server = make_server(config.server_name, tools, guard)
-            async with stdio_server() as (r, w):
-                await server.run(r, w, server.create_initialization_options())
+        tools = [t for t in upstream_tools if t.name in set(exposed)]
+        server = make_server(config.server_name, tools, guard)
+        async with stdio_server() as (r, w):
+            await server.run(r, w, server.create_initialization_options())
+
+
+async def approve_held(config: GuardConfig, receipt_id: str):
+    """Approve a held call as its principal and run it against the upstream.
+
+    Its own connection to the upstream: the guard serving the model may be
+    running, stopped, or on another machine sharing the store. The ledger is
+    what makes the call run once — a second approval finds the receipt no
+    longer waiting.
+    """
+    import anyio
+
+    if read_state(config) is None:
+        # Never bootstrap here: approving must not mint a principal and a grant.
+        raise SystemExit(f"no guard is initialized in {config.store_path}; nothing is waiting")
+    principal = load_principal_signer(config)
+    async with upstream_session(config) as (session, upstream_tools):
+        exposed, _ = _partition(config, [t.name for t in upstream_tools])
+        guard, _ = open_guard(config, session.call_tool, exposed)
+        return await anyio.to_thread.run_sync(lambda: guard.approve(receipt_id, principal))
 
 
 def _partition(config: GuardConfig, names: list[str]) -> tuple[list[str], list[str]]:

@@ -112,6 +112,16 @@ def main(argv: list[str] | None = None) -> int:
     mcp_init.add_argument("--config", required=True)
     mcp_serve = mcp_sub.add_parser("serve", help="Serve the guard on stdio")
     mcp_serve.add_argument("--config", required=True)
+    mcp_pending = mcp_sub.add_parser("pending", help="List calls waiting for your approval")
+    mcp_pending.add_argument("--config", required=True)
+    mcp_approve = mcp_sub.add_parser(
+        "approve", help="Approve a waiting call as its principal; it runs once"
+    )
+    mcp_approve.add_argument("--config", required=True)
+    mcp_approve.add_argument("--receipt", required=True)
+    mcp_approve.add_argument(
+        "--yes", action="store_true", help="Do not ask; for scripts run by the principal"
+    )
     _add_resolution_commands(mcp_sub)
 
     ch = sub.add_parser("chain", help="Inspect the receipt chain")
@@ -235,9 +245,14 @@ def _mcp(args) -> int:
     if args.mcp_cmd == "init":
         from .mcp.server import bootstrap, build_engine
 
+        from .mcp.clients import describe
+
         existing = read_state(config)
         if existing:
             print(f"already initialized: grant {existing['grant_id']}")
+            print(f"store     : {config.store_path.resolve()}")
+            print()
+            print(describe(args.config, config.server_name))
             return 0
         # No upstream connection is needed to mint the grant, so the executor
         # is never called here.
@@ -256,6 +271,8 @@ def _mcp(args) -> int:
         else:
             print(f"principal key: {config.store_path / 'keys' / 'principal.key'} (development key)")
         print(f"keys in   : {config.store_path / 'keys'} (keep them private)")
+        print()
+        print(describe(args.config, config.server_name))
         return 0
 
     if args.mcp_cmd in {"unknown", "resolve"}:
@@ -264,6 +281,20 @@ def _mcp(args) -> int:
         engine, _ = build_engine(config, _refuse_call, sorted(config.mapping.rules))
         args.resolve_cmd = args.mcp_cmd
         return _resolution(engine, args)
+
+    if args.mcp_cmd == "pending":
+        from .mcp.server import build_engine
+
+        engine, _ = build_engine(config, _refuse_call, sorted(config.mapping.rules))
+        held = engine.held_receipts(config.tenant)
+        for rec in held:
+            print(_describe_held(rec))
+        if not held:
+            print("nothing is waiting for approval")
+        return 0
+
+    if args.mcp_cmd == "approve":
+        return _mcp_approve(config, args)
 
     if args.mcp_cmd == "serve":
         try:
@@ -279,6 +310,57 @@ def _mcp(args) -> int:
         return 0
 
     return 2
+
+
+def _describe_held(rec: dict) -> str:
+    intent = rec.get("intent") or {}
+    context = intent.get("context") or {}
+    money = f"{intent.get('amount')} {intent.get('currency')}" if intent.get("amount") is not None else "-"
+    reasons = "; ".join((rec.get("decision") or {}).get("reasons") or [])
+    return (
+        f"{rec['id']}  {context.get('tool', intent.get('action', '?'))}  {money}"
+        f"  {intent.get('counterparty') or ''}\n"
+        f"{'':22}arguments {context.get('arguments_json', '{}')}\n"
+        f"{'':22}held because: {reasons}  (since {intent.get('created_at', '?')})"
+    )
+
+
+def _mcp_approve(config, args) -> int:
+    """Show the principal what they approve, then run it once."""
+    from .mcp.server import build_engine
+    from .signing import SigningError
+
+    engine, _ = build_engine(config, _refuse_call, sorted(config.mapping.rules))
+    held = {rec["id"]: rec for rec in engine.held_receipts(config.tenant)}
+    rec = held.get(args.receipt)
+    if rec is None:
+        print(f"{args.receipt} is not waiting for approval (see `mandate mcp pending`)", file=sys.stderr)
+        return 1
+    print(_describe_held(rec))
+    if not args.yes:
+        # Friction, not a security boundary: an agent with a shell can pass
+        # --yes too. What keeps approval out of the agent's reach is a
+        # principal key it cannot read — `principal_signer` (docs/MCP.md).
+        if not sys.stdin.isatty():
+            print("refusing to approve without a terminal; the principal passes --yes", file=sys.stderr)
+            return 1
+        if input("Approve and run this call once? [y/N] ").strip().lower() not in {"y", "yes"}:
+            print("not approved")
+            return 1
+    try:
+        import anyio
+
+        from .mcp.server import approve_held
+    except ImportError:
+        print(f"approving runs the call, which needs the mcp extra: {INSTALL_MCP}", file=sys.stderr)
+        return 1
+    try:
+        decision = anyio.run(approve_held, config, args.receipt)
+    except (FileNotFoundError, SigningError) as exc:
+        print(f"cannot approve: {exc}", file=sys.stderr)
+        return 1
+    print(f"{decision.outcome}: {decision.text}")
+    return 0 if decision.allowed else 1
 
 
 #: What `mandate chain anchor` writes, and therefore the only shape this

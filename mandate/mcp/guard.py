@@ -110,11 +110,16 @@ class McpGuard:
             )
         if outcome == "HUMAN_REQUIRED":
             reasons = "; ".join(receipt.get("decision", {}).get("reasons") or [])
+            # Addressed to the model, which in Claude Code or Cursor may have a
+            # shell. It is told to ask the user, not how to approve: the
+            # approval belongs to the principal, never to the agent it limits.
             return GuardDecision(
                 False,
                 f"Mandate is holding this call for human approval: {reasons}. "
-                f"Receipt {receipt_id} is waiting; once the principal approves it the "
-                f"call runs. Do not retry the tool — it will create a second request.",
+                f"Receipt {receipt_id} is waiting. Tell the user that this call needs "
+                f"their approval; once they approve it, it runs exactly once. Do not "
+                f"retry the tool — a retry is a second request — and do not approve it "
+                f"yourself.",
                 outcome,
                 receipt_id,
             )
@@ -122,7 +127,32 @@ class McpGuard:
             return GuardDecision(
                 False, f"Mandate returned an unexpected state {outcome}.", str(outcome), receipt_id
             )
+        return self._dispatch(receipt_id)
 
+    def approve(self, receipt_id: str, principal_signer: Signer) -> GuardDecision:
+        """A held call, approved by its principal, runs now — once.
+
+        The engine revalidates on approval: a grant revoked or a budget used up
+        while the call waited turns the approval into a denial, and nothing is
+        dispatched.
+        """
+        try:
+            approved = self.engine.approve(receipt_id, principal_signer, tenant=self.tenant)
+        except (MandateError, SigningError) as exc:
+            return GuardDecision(False, f"Approval refused: {exc}.", "REFUSED", receipt_id)
+        outcome = approved.get("outcome")
+        if outcome != "AUTHORIZED":
+            reasons = "; ".join(approved.get("decision", {}).get("reasons") or [str(outcome)])
+            return GuardDecision(
+                False,
+                f"Approved, but revalidation denied it: {reasons}. Nothing was dispatched.",
+                str(outcome),
+                receipt_id,
+            )
+        return self._dispatch(receipt_id)
+
+    def _dispatch(self, receipt_id: str) -> GuardDecision:
+        """Execute an AUTHORIZED receipt and say what happened."""
         idem = uuid4().hex
         try:
             executed = self.engine.execute(receipt_id, idempotency_key=idem, tenant=self.tenant)

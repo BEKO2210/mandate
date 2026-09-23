@@ -123,11 +123,28 @@ def _known(block: Any, allowed: set[str], where: str) -> None:
 
 
 def load_config(path: str | Path) -> GuardConfig:
-    raw = json.loads(Path(path).read_text(encoding="utf-8"), object_pairs_hook=_no_duplicates)
-    return parse_config(raw)
+    """Read a guard configuration; relative paths in it follow the file.
+
+    Claude Code, Cursor and Claude Desktop start the guard from a directory
+    of their choosing. A store resolved against *that* would be a different
+    store per client — and `serve` then bootstraps a fresh principal, agent
+    and grant there without a word.
+    """
+    path = Path(path)
+    raw = json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=_no_duplicates)
+    return parse_config(raw, base_dir=path.resolve().parent)
 
 
-def parse_config(raw: dict[str, Any]) -> GuardConfig:
+def _relative(base: Path | None, value: Any) -> Any:
+    if base is None or not isinstance(value, str) or not value:
+        return value
+    path = Path(value).expanduser()
+    return str(path if path.is_absolute() else base / path)
+
+
+def parse_config(raw: dict[str, Any], base_dir: str | Path | None = None) -> GuardConfig:
+    """`base_dir` anchors relative paths; without one they are left as given."""
+    base = Path(base_dir) if base_dir is not None else None
     _known(raw, _TOP, "configuration")
     if isinstance(raw.get("upstream"), dict):
         _known(raw["upstream"], _UPSTREAM, "upstream")
@@ -141,7 +158,7 @@ def parse_config(raw: dict[str, Any]) -> GuardConfig:
             command=upstream_raw["command"],
             args=tuple(upstream_raw.get("args") or ()),
             env=dict(upstream_raw.get("env") or {}),
-            cwd=upstream_raw.get("cwd"),
+            cwd=_relative(base, upstream_raw.get("cwd")),
         )
     except (KeyError, TypeError) as exc:
         raise MappingError(f"upstream must name a command to run: {exc}") from exc
@@ -190,18 +207,25 @@ def parse_config(raw: dict[str, Any]) -> GuardConfig:
             except SigningError as exc:
                 raise MappingError(f"{name}: {exc}") from exc
 
+    signers = {}
+    for name in ("agent_signer", "enforcer_signer", "principal_signer"):
+        block = raw.get(name)
+        if isinstance(block, dict) and block.get("kind") == "file" and "path" in block:
+            block = {**block, "path": _relative(base, block["path"])}
+        signers[name] = block
+
     return GuardConfig(
         audience=mapping.audience,
         upstream=upstream,
         mapping=mapping,
         grant=grant,
         tenant=raw.get("tenant", DEFAULT_TENANT),
-        store=raw.get("store", DEFAULT_STORE),
+        store=_relative(base, raw.get("store", DEFAULT_STORE)),
         timeout=float(raw.get("timeout", DEFAULT_TIMEOUT)),
         server_name=raw.get("server_name", "mandate_guard"),
-        agent_signer=raw.get("agent_signer"),
-        enforcer_signer=raw.get("enforcer_signer"),
-        principal_signer=raw.get("principal_signer"),
+        agent_signer=signers["agent_signer"],
+        enforcer_signer=signers["enforcer_signer"],
+        principal_signer=signers["principal_signer"],
     )
 
 

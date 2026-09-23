@@ -6,6 +6,16 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- **Human approval over MCP works.** A call held for approval told the model
+  it would run once the principal approved — and nothing could approve it.
+  `mandate mcp pending` lists held calls with their tool, arguments and
+  reason; `mandate mcp approve --receipt …` shows the call, asks, signs the
+  approval with the principal key and runs it once, after revalidation. The
+  agent's key cannot approve, a second approval is refused, and the model is
+  now told to ask the user rather than how to approve. (G257–G259)
+- **`mandate mcp init` prints how to connect a client**: the `claude mcp add`
+  line for Claude Code and the `mcpServers` entry for Cursor and Claude
+  Desktop, with absolute paths and interpreter. (G260)
 - **A Docker image.** Multi-stage, base pinned by digest, runs as uid 10001
   with everything it owns under `/data`, a health check on `/health`, and the
   gateway listening on `0.0.0.0:8080` (the CLI default, `127.0.0.1`, is
@@ -21,9 +31,14 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   workflow for when it is. See `docs/RELEASING.md`.
 
 ### Changed
+- **The MCP guard's store follows its configuration file.** A relative
+  `store` (and `upstream.cwd`, and a `file` signer's `path`) was resolved
+  against the directory the client happened to start the guard in; Claude
+  Code and Cursor start it elsewhere, and the guard then bootstrapped a fresh
+  principal, agent and grant there without a word. (G256)
 - `mandate mcp` answers a missing or invalid configuration with one line and
   exit 1, as `mandate gateway` does, and a missing `mcp` extra with the line
-  that installs it — not a traceback.
+  that installs it — not a traceback. (G261)
 - The README starts with how to install, and its "What this does not do"
   list no longer names MCP, three releases after the guard shipped. It now
   says what is actually out of scope, including guessing intent: every

@@ -70,6 +70,69 @@ mandate mcp serve --config guard.json   # stdio, for the agent runtime to spawn
 From the repository: the PyPI project named `mandate` is an unrelated package,
 so installing by that name gets someone else's code.
 
+`init` prints the lines that connect a client, with absolute paths — a client
+started from a desktop launcher has neither your shell's working directory nor
+its `PATH`. A relative `store` is resolved against the configuration file, so
+every client that starts the guard finds the same store.
+
+## Connect Claude Code or Cursor
+
+```bash
+mandate mcp init --config guard.json
+```
+
+```
+Connect a client:
+  Claude Code:
+    claude mcp add mandate_guard -- /usr/bin/python3 -m mandate mcp serve --config /home/you/project/guard.json
+  Cursor (.cursor/mcp.json) or Claude Desktop (claude_desktop_config.json):
+    {
+      "mcpServers": {
+        "mandate_guard": {
+          "command": "/usr/bin/python3",
+          "args": ["-m", "mandate", "mcp", "serve", "--config", "/home/you/project/guard.json"]
+        }
+      }
+    }
+```
+
+Paste one of them; the client starts the guard, and the guard starts the
+upstream. Remove the upstream server from the client's own configuration, or
+the model can still call it directly, around the guard.
+
+## Human approval
+
+A grant with `require_human_above` holds a call over that amount instead of
+running it. The model is told the call is waiting and that the user has to
+approve it — not how to approve it.
+
+```bash
+mandate mcp pending --config guard.json
+# rcpt_4f1c…  pay_invoice  800 EUR  dell.com
+#             arguments {"amount":800,"currency":"EUR","vendor":"dell.com"}
+#             held because: amount 800.00 requires human approval above 700.00
+
+mandate mcp approve --config guard.json --receipt rcpt_4f1c…
+# Approve and run this call once? [y/N] y
+# EXECUTED: …the upstream's answer…
+```
+
+Approval is signed by the key that issued the grant, then revalidated: a grant
+revoked or a daily budget used up while the call waited turns it into a denial,
+and nothing runs. The call runs once — a second approval finds the receipt no
+longer waiting. The agent's own key cannot approve.
+
+**Who can approve is who can read the principal key.** Without
+`principal_signer`, `init` writes that key to `<store>/keys/principal.key`. An
+agent with a shell running as the same user — Claude Code, Cursor's agent —
+can read it and could approve its own calls; `approve` refuses to run without
+a terminal unless given `--yes`, which is friction, not a boundary. For
+approvals that mean something, put the principal key where the agent cannot
+reach it: a `principal_signer` in a key manager the agent has no credentials
+for, or a store readable only by another user.
+
+## Keys
+
 `init` writes development keys under `<store>/keys`. An `agent_signer` block
 means the key already exists somewhere, so none is generated or written here.
 Where "somewhere" is depends on the kind: `aws-kms`, `gcp-kms`, `vault-transit`
@@ -98,8 +161,9 @@ A refusal names the rule, the grant and the receipt. An agent told only
 "denied" retries the same call; an agent told which limit refused it can pick a
 smaller amount or ask for a new grant.
 
-`HUMAN_REQUIRED` is reported as an error too, with the receipt id and an
-explicit instruction not to retry — the call is held, not lost.
+`HUMAN_REQUIRED` is reported as an error too, with the receipt id, an
+explicit instruction not to retry, and to ask the user — the call is held, not
+lost. See [Human approval](#human-approval).
 
 ## How arguments are carried
 

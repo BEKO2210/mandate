@@ -1046,6 +1046,15 @@ class Engine:
             raise MandateError("storage error") from exc
         return [json.loads(r["body"]) | {"tenant": r["tenant"]} for r in rows]
 
+    def held_receipts(self, tenant: str | None = None) -> list[dict[str, Any]]:
+        """Receipts waiting for a human, with what each would do if approved."""
+        try:
+            with self.ledger.tx() as tx:
+                rows = tx.receipts_in_state("HUMAN_REQUIRED", tenant)
+        except StorageError as exc:
+            raise MandateError("storage error") from exc
+        return [json.loads(r["body"]) | {"tenant": r["tenant"]} for r in rows]
+
     def resolve_unknown(
         self, receipt_id: str, outcome: str, *, operator: str, reason: str,
         tenant: str = DEFAULT_TENANT, budget_day: str | None = None,
