@@ -154,10 +154,17 @@ def _currency(args: dict[str, Any], rule: ToolRule) -> str:
     return value.upper()
 
 
-def _counterparty(args: dict[str, Any], key: str) -> str | None:
+def _counterparty(args: dict[str, Any], key: str) -> str:
+    # Configured means required: a call that leaves its counterparty out
+    # would otherwise be judged as if it named none, and an allow-list is
+    # not a question the call gets to skip.
     value = args.get(key)
-    if value is None:
-        return None
-    if not isinstance(value, str):
-        raise MappingError(f"argument {key!r} must be a string to be a counterparty")
-    return value[:MAX_SUMMARY]
+    if not isinstance(value, str) or not value:
+        raise MappingError(
+            f"argument {key!r} is configured as the counterparty and must be a "
+            f"non-empty string"
+        )
+    if len(value) > MAX_SUMMARY:
+        # Cut to fit, the value judged would not be the value sent upstream.
+        raise MappingError(f"argument {key!r} is longer than {MAX_SUMMARY} characters")
+    return value

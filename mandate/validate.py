@@ -133,7 +133,7 @@ CLOCK_SKEW_S = 30
 NONCE_RETENTION_S = INTENT_MAX_AGE_S + CLOCK_SKEW_S + 60
 
 
-def check_freshness(created_at: str, max_age_s: int = INTENT_MAX_AGE_S) -> None:
+def check_freshness(created_at: str, max_age_s: int = INTENT_MAX_AGE_S, what: str = "intent") -> None:
     from datetime import datetime, timezone
 
     try:
@@ -142,4 +142,4 @@ def check_freshness(created_at: str, max_age_s: int = INTENT_MAX_AGE_S) -> None:
         raise ValidationError("invalid timestamp") from exc
     age = (utcnow() - ts).total_seconds()
     if age > max_age_s or age < -CLOCK_SKEW_S:
-        raise ValidationError("intent not fresh")
+        raise ValidationError(f"{what} not fresh")

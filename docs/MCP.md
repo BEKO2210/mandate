@@ -53,13 +53,22 @@ the model cannot call what the configuration never considered. Set
 string amount would have to be parsed, and a parse is a guess — the guard
 refuses instead.
 
+`counterparty_from` names the argument that says who is paid or addressed —
+a vendor, a recipient. Once configured it is required: a call without it, with
+an empty value, or with one longer than 256 characters is refused before
+anything is signed, so a grant's `counterparties_allow` cannot be skipped by
+leaving the name out.
+
 ## Run
 
 ```bash
-pip install "mandate[mcp]"
+pip install "mandate[mcp] @ git+https://github.com/BEKO2210/mandate"
 mandate mcp init  --config guard.json   # principal, agent and grant, once
 mandate mcp serve --config guard.json   # stdio, for the agent runtime to spawn
 ```
+
+From the repository: the PyPI project named `mandate` is an unrelated package,
+so installing by that name gets someone else's code.
 
 `init` writes development keys under `<store>/keys`. An `agent_signer` block
 means the key already exists somewhere, so none is generated or written here.

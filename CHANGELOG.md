@@ -3,6 +3,31 @@
 All notable changes to this project are documented here.
 This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Security
+- **The install instructions fetched someone else's package.** The README and
+  `docs/MCP.md` said `pip install "mandate[mcp]"`, but the PyPI project named
+  `mandate` is an unrelated AWS Cognito wrapper: following them installed
+  foreign code and no Mandate at all. Every install line now names the
+  repository (`pip install "mandate[mcp] @ git+https://github.com/BEKO2210/mandate"`),
+  and G253 refuses any line that would resolve `mandate` from PyPI. No PyPI
+  name is claimed yet; that waits for a decision on the product name.
+- **An approval without `created_at` was treated as created now**, so a
+  signed approval stayed usable for as long as anyone kept it — the fault
+  v0.9.0 closed for intents, still open one call later. `created_at` is now
+  required on approvals (ten-minute window), and a malformed `not_after` is
+  a refusal instead of an unhandled error (a 500 at the gateway).
+  **Breaking** for API clients that build their own approvals without
+  `created_at`; `Engine.approve` has always set it. (G249, G250)
+- **A counterparty allow-list could be passed by naming no counterparty.**
+  The list was consulted only when an intent carried one. A grant with
+  `counterparties_allow` now denies an intent that carries an amount but no
+  counterparty — a payment to nobody named — while a call that moves no
+  money is not the list's to refuse. An MCP tool configured with
+  `counterparty_from` refuses a call whose argument is missing, empty, or too
+  long to judge as sent. (G251, G252)
+
 ## [0.9.0] — 2026-09-22
 
 Every gap the previous releases listed as open, closed or bounded. Each fix

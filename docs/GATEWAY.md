@@ -9,6 +9,10 @@ GET /health
 
 Forbidden: target_url, destination_url, host, base_url, proxy_url, url, network_policy.
 
+An approval is signed by the grant's principal and must carry `receipt_id`,
+`intent_id` and `created_at`; it is accepted for ten minutes after
+`created_at` and not after its optional `not_after`.
+
 Body limit: 32768 bytes, enforced at ASGI receive before unbounded buffering.
 
 Route destinations default to `network_policy=public`. Loopback/private targets require server-side `allow_private`. The name is resolved once and the connection goes to the address that was checked, for HTTPS as well; SNI and certificate verification still use the name. Proxy environment variables are ignored.
