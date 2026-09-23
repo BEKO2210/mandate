@@ -44,12 +44,13 @@
     [470, 340]
   ];
 
-  // The diagram has two legitimate paths after Mandate:
-  // direct authorization (Mandate -> Upstream) and human step-up
-  // (Mandate -> Human -> Upstream). Alternate cycles so the animation
-  // demonstrates both without implying that human approval is mandatory.
+  // Three legitimate endings after Mandate, taken in turn: direct
+  // authorization (Mandate -> Upstream), human step-up (Mandate -> Human ->
+  // Upstream), and denial, where the request stops at the gate. Showing the
+  // denial is the point of the product; showing only successes would hide it.
   const directSequence = [0, 1, 2, 4, 5];
   const stepUpSequence = [0, 1, 2, 3, 4, 5];
+  const deniedSequence = [0, 1, 2];
 
   const routes = new Map([
     ["0-1", [[90, 70], [280, 70]]],
@@ -64,30 +65,72 @@
   const list = document.querySelectorAll(".arch [data-stage]");
   const label = document.getElementById("stage-label");
   const packet = document.getElementById("packet");
+  const trail = document.getElementById("trail");
+  const ping = document.getElementById("ping");
+  const stamp = document.getElementById("stamp");
+  const cut = document.getElementById("cut");
+  const gateNote = document.getElementById("gate-note");
+  const receiptNote = document.getElementById("receipt-note");
+  const stageboard = document.querySelector(".stageboard");
   const media = window.matchMedia("(prefers-reduced-motion: reduce)");
   let reduce = media.matches;
   let runToken = 0;
+  let seq = 0;
+
+  const GATE_IDLE = "evaluate · reserve · bind";
+  const RECEIPT_IDLE = "signed · chained";
+
+  // Paused while the board is off screen: no work nobody is watching.
+  let visible = true;
+  let wake = null;
+  if (stageboard && "IntersectionObserver" in window) {
+    new IntersectionObserver(([entry]) => {
+      visible = entry.isIntersecting;
+      if (visible && wake) { wake(); wake = null; }
+    }).observe(stageboard);
+  }
+  const whenVisible = () => (visible ? Promise.resolve() : new Promise((r) => { wake = r; }));
 
   const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  const alive = (token) => !reduce && token === runToken;
 
   const setPacket = ([x, y]) => {
-    if (!packet) return;
-    packet.setAttribute("cx", String(x));
-    packet.setAttribute("cy", String(y));
+    if (packet) packet.setAttribute("transform", `translate(${x} ${y})`);
   };
 
-  const setStage = (i) => {
+  let trailPoints = [];
+  const drawTrail = (head) => {
+    if (!trail) return;
+    const pts = head ? [...trailPoints, head] : trailPoints;
+    trail.setAttribute("points", pts.map(([x, y]) => `${x},${y}`).join(" "));
+  };
+
+  const restart = (el, cls) => {
+    if (!el) return;
+    el.classList.remove(cls);
+    void el.getBoundingClientRect();
+    el.classList.add(cls);
+  };
+
+  const pingAt = (i) => {
+    if (!ping) return;
+    ping.setAttribute("cx", String(nodes[i][0]));
+    ping.setAttribute("cy", String(nodes[i][1]));
+    restart(ping, "go");
+  };
+
+  const setStage = (i, text) => {
     board.forEach((el, idx) => el.classList.toggle("is-on", idx === i));
     list.forEach((el, idx) => el.classList.toggle("is-on", idx === i));
     if (label) {
-      label.textContent = `Stage ${String(i + 1).padStart(2, "0")} · ${names[i]}`;
+      label.textContent = `Stage ${String(i + 1).padStart(2, "0")} · ${text || names[i]}`;
     }
   };
 
   const lerp = (a, b, t) => a + (b - a) * t;
 
   const moveSegment = (from, to, ms, token) => new Promise((resolve) => {
-    if (!packet || reduce || token !== runToken) {
+    if (!packet || !alive(token)) {
       resolve();
       return;
     }
@@ -95,13 +138,17 @@
     const [x1, y1] = to;
     const start = performance.now();
     const step = (now) => {
-      if (reduce || token !== runToken) {
+      if (!alive(token)) {
         resolve();
         return;
       }
-      const t = Math.min(1, (now - start) / ms);
+      // A frame timestamp can predate `start`; unclamped, t < 0 makes the
+      // smoothstep overshoot far past the segment.
+      const t = Math.min(1, Math.max(0, (now - start) / ms));
       const eased = t * t * (3 - 2 * t);
-      setPacket([lerp(x0, x1, eased), lerp(y0, y1, eased)]);
+      const at = [lerp(x0, x1, eased), lerp(y0, y1, eased)];
+      setPacket(at);
+      drawTrail(at);
       if (t < 1) requestAnimationFrame(step);
       else resolve();
     };
@@ -117,23 +164,44 @@
     const lengths = [];
     let totalLength = 0;
     for (let i = 1; i < waypoints.length; i += 1) {
-      const dx = waypoints[i][0] - waypoints[i - 1][0];
-      const dy = waypoints[i][1] - waypoints[i - 1][1];
-      const len = Math.hypot(dx, dy);
+      const len = Math.hypot(waypoints[i][0] - waypoints[i - 1][0], waypoints[i][1] - waypoints[i - 1][1]);
       lengths.push(len);
       totalLength += len;
     }
     for (let i = 1; i < waypoints.length; i += 1) {
       const ms = totalLength ? totalMs * (lengths[i - 1] / totalLength) : totalMs;
       await moveSegment(waypoints[i - 1], waypoints[i], ms, token);
-      if (reduce || token !== runToken) return;
+      if (!alive(token)) return;
+      trailPoints.push(waypoints[i]);
     }
+  };
+
+  // The gate reads its checks out one by one; a denial stops at the failure.
+  const runChecks = async (deny, token) => {
+    const checks = ["policy", "budget", "route"];
+    const done = [];
+    for (let i = 0; i < checks.length; i += 1) {
+      await delay(230);
+      if (!alive(token)) return;
+      const failed = deny && checks[i] === "budget";
+      done.push(`${checks[i]} ${failed ? "✗" : "✓"}`);
+      if (gateNote) gateNote.textContent = done.join(" · ");
+      if (failed) return;
+    }
+  };
+
+  const resetBoard = () => {
+    board.forEach((el) => el.classList.remove("is-deny", "is-dim"));
+    if (stamp) stamp.classList.remove("on");
+    if (cut) cut.classList.remove("on");
+    if (gateNote) gateNote.textContent = GATE_IDLE;
   };
 
   const setReducedState = () => {
     runToken += 1;
     document.documentElement.classList.toggle("reduced", reduce);
     if (reduce) {
+      resetBoard();
       setStage(2);
       setPacket(nodes[2]);
     }
@@ -142,35 +210,72 @@
   const dwell = 900;
   const travel = 700;
 
-  const runCycle = async (sequence, token) => {
+  const runCycle = async (sequence, deny, token) => {
+    await whenVisible();
+    resetBoard();
+    trailPoints = [nodes[sequence[0]]];
+    drawTrail();
+    if (trail) trail.classList.remove("fade");
     setPacket(nodes[sequence[0]]);
     if (packet) packet.style.opacity = "1";
     setStage(sequence[0]);
+    pingAt(sequence[0]);
     await delay(dwell);
 
     for (let i = 1; i < sequence.length; i += 1) {
-      if (reduce || token !== runToken) return;
+      if (!alive(token)) return;
       const from = sequence[i - 1];
       const to = sequence[i];
       await moveRoute(from, to, travel, token);
-      if (reduce || token !== runToken) return;
+      if (!alive(token)) return;
       setStage(to);
+      pingAt(to);
+      if (to === 2) {
+        await runChecks(deny, token);
+        if (!alive(token)) return;
+      } else if (to === 5 && receiptNote) {
+        seq += 1;
+        receiptNote.textContent = `signed · #${String(seq).padStart(4, "0")}`;
+      }
       await delay(dwell);
     }
 
+    if (deny) {
+      // Nothing crosses to the upstream. The denial is still a receipt.
+      board[2].classList.add("is-deny");
+      board[4].classList.add("is-dim");
+      if (stamp) stamp.classList.add("on");
+      if (cut) cut.classList.add("on");
+      setStage(2, "Denied — budget exceeded, nothing is sent");
+      await delay(1500);
+      if (!alive(token)) return;
+      seq += 1;
+      if (receiptNote) receiptNote.textContent = `denial · #${String(seq).padStart(4, "0")}`;
+      pingAt(5);
+      setStage(5, "The denial is signed and chained like any receipt");
+      await delay(1500);
+    }
+
     // Reset invisibly rather than drawing a fake Receipt -> Principal edge.
+    if (trail) trail.classList.add("fade");
     if (packet) packet.style.opacity = "0";
-    setPacket(nodes[0]);
-    await delay(140);
-    if (packet) packet.style.opacity = "1";
+    await delay(600);
+    if (receiptNote) receiptNote.textContent = RECEIPT_IDLE;
   };
+
+  const cycles = [
+    [directSequence, false],
+    [deniedSequence, true],
+    [stepUpSequence, false]
+  ];
 
   const startFlow = async () => {
     const token = ++runToken;
-    let stepUp = false;
-    while (!reduce && token === runToken) {
-      await runCycle(stepUp ? stepUpSequence : directSequence, token);
-      stepUp = !stepUp;
+    let n = 0;
+    while (alive(token)) {
+      const [sequence, deny] = cycles[n % cycles.length];
+      await runCycle(sequence, deny, token);
+      n += 1;
     }
   };
 

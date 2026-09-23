@@ -18,3 +18,9 @@ def test_website_flow_models_direct_and_human_stepup_paths():
     # The optional human branch is visually distinct from the direct route.
     assert html.count('class="wire wire-optional"') == 2
     assert html.count('class="wire wire-main"') == 2
+
+    # Denial is shown, not just success: it stops at the gate, never draws a
+    # route to the upstream, and is still receipted.
+    assert "const deniedSequence = [0, 1, 2]" in script
+    assert 'id="stamp"' in html and 'id="cut"' in html
+    assert "The denial is signed and chained like any receipt" in script
