@@ -53,10 +53,18 @@ def _pypi_mandate_targets(line: str) -> list[str]:
     command = line.split("pip install", 1)[1]
     # The command ends where the prose, markup or shell comment around it starts.
     command = re.split(r"`|<|\s#", command, maxsplit=1)[0]
-    try:
-        args = shlex.split(command)
-    except ValueError:
-        args = command.split()
+    # A quote left open belongs to the string the line sits in (a Python
+    # constant, say); trim it. What still does not parse is split on spaces,
+    # which can only flag more, never less.
+    args = command.split()
+    while command:
+        try:
+            args = shlex.split(command)
+            break
+        except ValueError:
+            if command[-1] not in "'\")`,.;":
+                break
+            command = command[:-1]
     bad, editable = [], False
     for arg in args:
         if arg in ("-e", "--editable"):
@@ -79,6 +87,8 @@ def test_g253_no_install_line_resolves_mandate_from_pypi():
     assert _pypi_mandate_targets(f'pip install "mandate[mcp]" "other @ {REPO}"') == ["mandate[mcp]"]
     assert _pypi_mandate_targets(f'pip install "mandate[mcp] @ {REPO}"') == []
     assert _pypi_mandate_targets('pip install -e "./mandate[mcp]"') == []
+    assert _pypi_mandate_targets(f"""INSTALL = 'pip install "mandate[mcp] @ {REPO}"'""") == []
+    assert _pypi_mandate_targets("""INSTALL = 'pip install "mandate[mcp]"'""") == ["mandate[mcp]"]
 
     sources = [Path("README.md"), Path("site/index.html"), *Path("docs").glob("*.md"), *Path("mandate").rglob("*.py")]
     bad, found = [], 0
