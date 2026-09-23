@@ -10,7 +10,11 @@ def test_website_flow_models_direct_and_human_stepup_paths():
     assert "const directSequence = [0, 1, 2, 4, 5]" in script
     assert "const stepUpSequence = [0, 1, 2, 3, 4, 5]" in script
     assert '["2-4", [[280, 214], [470, 214]]]' in script
-    assert '["3-4", [[280, 340], [470, 340], [470, 214]]]' in script
+    # Human step-up sits above the upstream, so after the gate the step-up
+    # path only moves forward: up to the human, down into the upstream. It
+    # no longer runs through the Receipt stage and doubles back.
+    assert '["2-3", [[280, 214], [378, 214], [378, 70], [470, 70]]]' in script
+    assert '["3-4", [[470, 70], [470, 214]]]' in script
 
     # The packet is JS-controlled from one state machine; no independent SMIL loop.
     assert "<animateMotion" not in html

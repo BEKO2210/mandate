@@ -35,11 +35,14 @@
     "Enforcer signs the execution receipt"
   ];
 
+  // Human step-up sits above the upstream, not below it: after the gate
+  // the step-up path only ever moves forward (up to the human, then down
+  // through the upstream to the receipt) and never crosses another stage.
   const nodes = [
     [90, 70],
     [280, 70],
     [280, 214],
-    [280, 340],
+    [470, 70],
     [470, 214],
     [470, 340]
   ];
@@ -55,9 +58,9 @@
   const routes = new Map([
     ["0-1", [[90, 70], [280, 70]]],
     ["1-2", [[280, 70], [280, 214]]],
-    ["2-3", [[280, 214], [280, 340]]],
+    ["2-3", [[280, 214], [378, 214], [378, 70], [470, 70]]],
     ["2-4", [[280, 214], [470, 214]]],
-    ["3-4", [[280, 340], [470, 340], [470, 214]]],
+    ["3-4", [[470, 70], [470, 214]]],
     ["4-5", [[470, 214], [470, 340]]]
   ]);
 
@@ -72,10 +75,55 @@
   const gateNote = document.getElementById("gate-note");
   const receiptNote = document.getElementById("receipt-note");
   const stageboard = document.querySelector(".stageboard");
+  const chainRow = document.getElementById("chain-row");
   const media = window.matchMedia("(prefers-reduced-motion: reduce)");
   let reduce = media.matches;
   let runToken = 0;
   let seq = 0;
+
+  // The receipt chain: each receipt, a denial included, is appended next to
+  // the Receipt stage and pushes the older ones left.
+  const SVG_NS = "http://www.w3.org/2000/svg";
+  const CHAIN_Y = 340;
+  const CHAIN_HEAD = 360;
+  const CHAIN_STEP = 58;
+  const CHAIN_MAX = 6;
+  const chainBlocks = [];
+  const layoutChain = () => {
+    chainBlocks.forEach((b, i) => {
+      b.style.transform = `translate(${CHAIN_HEAD - i * CHAIN_STEP}px, ${CHAIN_Y}px)`;
+    });
+  };
+  const appendReceipt = (n, denial, animate) => {
+    if (!chainRow) return;
+    const g = document.createElementNS(SVG_NS, "g");
+    g.setAttribute("class", `block${denial ? " deny" : ""}${animate ? " fresh" : ""}`);
+    const link = document.createElementNS(SVG_NS, "path");
+    link.setAttribute("d", "M23 0H35");
+    link.setAttribute("class", "block-link");
+    const rect = document.createElementNS(SVG_NS, "rect");
+    rect.setAttribute("x", "-23"); rect.setAttribute("y", "-13");
+    rect.setAttribute("width", "46"); rect.setAttribute("height", "26"); rect.setAttribute("rx", "5");
+    const text = document.createElementNS(SVG_NS, "text");
+    text.setAttribute("y", "3.5"); text.setAttribute("text-anchor", "middle");
+    text.textContent = `#${String(n).padStart(4, "0")}`;
+    g.append(link, rect, text);
+    // Enter at the head position so only the older blocks slide.
+    g.style.transform = `translate(${CHAIN_HEAD}px, ${CHAIN_Y}px)`;
+    chainRow.append(g);
+    chainBlocks.unshift(g);
+    if (!animate) g.classList.add("in");
+    else requestAnimationFrame(() => requestAnimationFrame(() => g.classList.add("in")));
+    layoutChain();
+    while (chainBlocks.length > CHAIN_MAX) {
+      const old = chainBlocks.pop();
+      old.classList.remove("in");
+      setTimeout(() => old.remove(), 500);
+    }
+    setTimeout(() => g.classList.remove("fresh"), 1600);
+  };
+  for (let n = 1; n <= 3; n += 1) appendReceipt(n, n === 2, false);
+  seq = 3;
 
   const GATE_IDLE = "evaluate · reserve · bind";
   const RECEIPT_IDLE = "signed · chained";
@@ -233,9 +281,10 @@
       if (to === 2) {
         await runChecks(deny, token);
         if (!alive(token)) return;
-      } else if (to === 5 && receiptNote) {
+      } else if (to === 5) {
         seq += 1;
-        receiptNote.textContent = `signed · #${String(seq).padStart(4, "0")}`;
+        if (receiptNote) receiptNote.textContent = `signed · #${String(seq).padStart(4, "0")}`;
+        appendReceipt(seq, false, true);
       }
       await delay(dwell);
     }
@@ -251,6 +300,7 @@
       if (!alive(token)) return;
       seq += 1;
       if (receiptNote) receiptNote.textContent = `denial · #${String(seq).padStart(4, "0")}`;
+      appendReceipt(seq, true, true);
       pingAt(5);
       setStage(5, "The denial is signed and chained like any receipt");
       await delay(1500);

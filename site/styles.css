@@ -217,6 +217,17 @@ code { overflow-wrap: anywhere; }
 .stamp rect { fill: #2a0c03; stroke: var(--fire); stroke-width: 2; }
 .stamp text { fill: var(--fire); }
 .stamp.on { opacity: 1; transform: rotate(-6deg) scale(1); }
+/* The receipt chain along the bottom of the board. */
+.chain-cap { font: 500 9px var(--mono); letter-spacing: 0.18em; fill: var(--muted); opacity: 0.8; }
+.chain-link, .block-link { fill: none; stroke: #20414f; stroke-width: 1.5; }
+.chain .block { opacity: 0; transition: transform 0.5s cubic-bezier(0.3, 0.7, 0.2, 1), opacity 0.45s; }
+.chain .block.in { opacity: 1; }
+.chain .block rect { fill: #001019; stroke: #20414f; transition: stroke 0.6s, fill 0.6s; }
+.chain .block text { font: 500 9px var(--mono); fill: #7d98a6; }
+.chain .block.deny rect { stroke: var(--fire); stroke-dasharray: 3 3; }
+.chain .block.deny text { fill: var(--fire); }
+.chain .block.fresh rect { stroke: var(--fire); fill: #0a2b3a; }
+.chain .block.fresh text { fill: var(--paper); }
 html.reduced .packet, html.reduced .trail, html.reduced .ping, html.reduced .stamp, html.reduced .cut { display: none; }
 html.reduced .stageboard::before { display: none; }
 html.reduced .wire { stroke-dasharray: none; }
