@@ -281,6 +281,18 @@ section:not(.hero) {
 .finale .btn-solid { background: #001621; border-color: #001621; color: var(--fire); }
 .cta { display: flex; align-items: flex-end; justify-content: space-between; gap: 40px; flex-wrap: wrap; }
 
+/* --- maker --------------------------------------------------------------- */
+.maker-row { display: flex; align-items: center; gap: clamp(24px, 4vw, 48px); flex-wrap: wrap; }
+.maker-photo {
+  width: clamp(120px, 16vw, 168px); height: auto; aspect-ratio: 1; border-radius: 50%;
+  box-shadow: 0 0 0 6px var(--ink), 0 0 0 7px var(--line-fire);
+  flex-shrink: 0;
+}
+.maker-text { flex: 1 1 260px; min-width: 0; }
+.maker-text .kicker { margin-bottom: 12px; }
+.maker-text p:last-child { color: var(--muted); margin-top: 14px; }
+.maker-links { display: flex; gap: 10px; flex-wrap: wrap; }
+
 /* --- footer -------------------------------------------------------------- */
 footer { background: var(--ink); border-radius: var(--radius); padding: 34px 0; }
 .foot { display: flex; align-items: center; justify-content: space-between; gap: 20px; flex-wrap: wrap; font-size: 0.86rem; color: var(--muted); }
