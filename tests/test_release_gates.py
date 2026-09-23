@@ -1,8 +1,13 @@
-"""Release gates G235-G236.
+"""Release gates G235-G236 and G253.
 
 The gateway's `/v1/info` reported version 0.5.0 through four releases,
 because the number was typed into the module once. The same drift the
 landing page had, in the one place a client asks the gateway what it is.
+
+And the README told people to `pip install "mandate[mcp]"`, while the PyPI
+project named `mandate` is an unrelated AWS Cognito wrapper: following the
+instructions installed someone else's code. Until the project owns a name on
+PyPI, every install line points at the repository.
 """
 
 from __future__ import annotations
@@ -35,3 +40,23 @@ def test_g236_readme_and_changelog_name_the_shipped_version():
     assert newest and newest.group(1) == version, "the newest changelog entry is another version"
     pyproject = Path("pyproject.toml").read_text(encoding="utf-8")
     assert f'\nversion = "{version}"\n' in pyproject
+
+
+REPO = "git+https://github.com/BEKO2210/mandate"
+
+
+def test_g253_no_install_line_resolves_mandate_from_pypi():
+    """`pip install mandate…` without a direct reference asks PyPI for a name
+    this project does not own. Every line that installs Mandate names the
+    repository (or a local checkout) instead."""
+    sources = [Path("README.md"), Path("site/index.html"), *Path("docs").glob("*.md"), *Path("mandate").rglob("*.py")]
+    bad, found = [], 0
+    for path in sources:
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if "pip install" not in line or "mandate" not in line.split("pip install", 1)[1]:
+                continue
+            found += 1
+            if REPO not in line and " -e " not in f" {line} ":
+                bad.append(f"{path}: {line.strip()}")
+    assert not bad, "install lines that would fetch `mandate` from PyPI:\n" + "\n".join(bad)
+    assert found, "the documentation must say how to install"

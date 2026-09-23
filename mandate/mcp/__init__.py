@@ -1,6 +1,6 @@
 """Mandate in front of an MCP server.
 
-`serve` and `make_server` need the `mcp` package (`pip install mandate[mcp]`).
+`serve` and `make_server` need the `mcp` package (`pip install "mandate[mcp] @ git+https://github.com/BEKO2210/mandate"`).
 Everything that decides whether a call may happen — the mapping and the guard —
 imports nothing from the SDK, so enforcement can be tested on its own.
 """

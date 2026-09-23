@@ -62,10 +62,13 @@ leaving the name out.
 ## Run
 
 ```bash
-pip install "mandate[mcp]"
+pip install "mandate[mcp] @ git+https://github.com/BEKO2210/mandate"
 mandate mcp init  --config guard.json   # principal, agent and grant, once
 mandate mcp serve --config guard.json   # stdio, for the agent runtime to spawn
 ```
+
+From the repository: the PyPI project named `mandate` is an unrelated package,
+so installing by that name gets someone else's code.
 
 `init` writes development keys under `<store>/keys`. An `agent_signer` block
 means the key already exists somewhere, so none is generated or written here.

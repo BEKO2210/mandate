@@ -158,10 +158,13 @@ model's side changes — same tool names, same arguments, one refusal it has to
 respect.
 
 ```bash
-pip install "mandate[mcp]"
+pip install "mandate[mcp] @ git+https://github.com/BEKO2210/mandate"
 mandate mcp init  --config guard.json
 mandate mcp serve --config guard.json
 ```
+
+Install from the repository. The PyPI project named `mandate` is an unrelated
+package: installing by that name gets someone else's code, not this.
 
 ```
 create_issue        -> UPSTREAM RAN create_issue on beko/mandate     isError: False
