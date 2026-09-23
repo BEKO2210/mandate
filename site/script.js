@@ -243,6 +243,7 @@
     if (stamp) stamp.classList.remove("on");
     if (cut) cut.classList.remove("on");
     if (gateNote) gateNote.textContent = GATE_IDLE;
+    if (receiptNote) receiptNote.textContent = RECEIPT_IDLE;
   };
 
   const setReducedState = () => {
@@ -260,6 +261,9 @@
 
   const runCycle = async (sequence, deny, token) => {
     await whenVisible();
+    // Every await is a point where reduced motion may have taken over and
+    // set its still; a stale cycle must not write over it.
+    if (!alive(token)) return;
     resetBoard();
     trailPoints = [nodes[sequence[0]]];
     drawTrail();
@@ -288,6 +292,7 @@
       }
       await delay(dwell);
     }
+    if (!alive(token)) return;
 
     if (deny) {
       // Nothing crosses to the upstream. The denial is still a receipt.
@@ -304,6 +309,7 @@
       pingAt(5);
       setStage(5, "The denial is signed and chained like any receipt");
       await delay(1500);
+      if (!alive(token)) return;
     }
 
     // Reset invisibly rather than drawing a fake Receipt -> Principal edge.

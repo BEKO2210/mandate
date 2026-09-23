@@ -4,6 +4,7 @@ from pathlib import Path
 
 
 def test_website_flow_models_direct_and_human_stepup_paths():
+    """The animation takes the routes the architecture allows, and shows a denial."""
     script = Path("site/script.js").read_text(encoding="utf-8")
     html = Path("site/index.html").read_text(encoding="utf-8")
 
