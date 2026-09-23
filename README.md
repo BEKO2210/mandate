@@ -15,6 +15,9 @@ Mandate is not on PyPI yet. The PyPI project named `mandate` is an unrelated
 package, so install from the repository — or from a checkout with
 `pip install -e ".[mcp]"`.
 
+Or as a container — non-root, configuration and ledger in one volume:
+`docker build -t mandate .`, then see [docs/DOCKER.md](docs/DOCKER.md).
+
 ## What v0.9.0 adds
 
 The gaps the last releases listed as open, closed — each reproduced first,

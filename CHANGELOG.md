@@ -6,6 +6,13 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- **A Docker image.** Multi-stage, base pinned by digest, runs as uid 10001
+  with everything it owns under `/data`, a health check on `/health`, and the
+  gateway listening on `0.0.0.0:8080` (the CLI default, `127.0.0.1`, is
+  unreachable through a port mapping). `.dockerignore` is an allow-list, so no
+  key or `.env` in the working tree can reach a layer. CI builds it, checks
+  the uid, serves a mounted configuration and expects `401` without a key.
+  See `docs/DOCKER.md`. (G255)
 - `.github/workflows/release.yml`: a published GitHub release is built and
   proven installable — the tag must equal the pyproject version, the suite
   runs, `twine check --strict` passes, the wheel is installed into a clean

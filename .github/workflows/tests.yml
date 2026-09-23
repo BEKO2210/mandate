@@ -56,3 +56,33 @@ jobs:
 
       - name: Run the demo scenario
         run: python -m mandate demo
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build the image
+        run: docker build -t mandate:ci .
+
+      - name: It runs as uid 10001, not root
+        run: test "$(docker run --rm --entrypoint id mandate:ci -u)" = "10001"
+
+      - name: The gateway serves from a mounted configuration
+        run: |
+          mkdir smoke
+          cat > smoke/gateway.json <<'JSON'
+          {"store": "store", "auth": {"kind": "api_keys"},
+           "routes": [{"audience": "mandate://ci", "base_url": "https://erp.example.com",
+                       "allowed_methods": ["POST"], "allowed_paths": ["/orders"]}]}
+          JSON
+          chmod -R a+rwX smoke
+          docker run -d --name mandate -p 8080:8080 -v "$PWD/smoke:/data" mandate:ci
+          for i in $(seq 1 30); do curl -fsS localhost:8080/health && break; sleep 1; done
+          curl -fsS localhost:8080/health
+          test "$(curl -s -o /dev/null -w '%{http_code}' -X POST localhost:8080/v1/intents -d '{}')" = "401"
+
+      - name: Logs
+        if: always()
+        run: docker logs mandate || true

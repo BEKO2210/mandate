@@ -1,4 +1,4 @@
-"""Release gates G235-G236 and G253-G254.
+"""Release gates G235-G236 and G253-G255.
 
 The gateway's `/v1/info` reported version 0.5.0 through four releases,
 because the number was typed into the module once. The same drift the
@@ -111,3 +111,19 @@ def test_g254_the_release_workflow_holds_no_token():
     for leak in ("password:", "PYPI_TOKEN", "PYPI_API_TOKEN", "${{ secrets."):
         assert leak not in workflow, leak
     assert "twine check --strict" in workflow and "/tmp/clean/bin/mandate demo" in workflow
+
+
+def test_g255_the_image_is_pinned_and_does_not_run_as_root():
+    """A tag moves; a digest does not. And a gateway that holds signing keys
+    runs as an unprivileged user, with the build context an allow-list so no
+    key or .env in the working tree can be copied into a layer."""
+    dockerfile = Path("Dockerfile").read_text(encoding="utf-8")
+    base = re.search(r"^ARG PYTHON_IMAGE=(\S+)$", dockerfile, re.M)
+    assert base and re.fullmatch(r"python:[\w.-]+@sha256:[0-9a-f]{64}", base.group(1)), base
+    stages = re.findall(r"^FROM\s+(\S+)", dockerfile, re.M)
+    assert stages and all(s == "${PYTHON_IMAGE}" for s in stages), stages
+    users = re.findall(r"^USER\s+(\S+)$", dockerfile, re.M)
+    assert users and users[-1] not in {"root", "0"}, users
+    rules = [line.strip() for line in Path(".dockerignore").read_text(encoding="utf-8").splitlines()]
+    rules = [r for r in rules if r and not r.startswith("#")]
+    assert rules[0] == "*", "the build context must start from nothing and allow files back in"
