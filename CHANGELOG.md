@@ -5,6 +5,25 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- `.github/workflows/release.yml`: a published GitHub release is built and
+  proven installable — the tag must equal the pyproject version, the suite
+  runs, `twine check --strict` passes, the wheel is installed into a clean
+  environment and `mandate demo` runs from it. Nothing is uploaded to PyPI
+  until the project's name is settled; G254 keeps tokens out of the
+  workflow for when it is. See `docs/RELEASING.md`.
+
+### Changed
+- `mandate mcp` answers a missing or invalid configuration with one line and
+  exit 1, as `mandate gateway` does, and a missing `mcp` extra with the line
+  that installs it — not a traceback.
+- The README starts with how to install, and its "What this does not do"
+  list no longer names MCP, three releases after the guard shipped. It now
+  says what is actually out of scope, including guessing intent: every
+  decision is deterministic policy over signed fields.
+- Package metadata: project URLs, keywords, classifiers, and the license
+  declared the PEP 639 way.
+
 ### Security
 - **The install instructions fetched someone else's package.** The README and
   `docs/MCP.md` said `pip install "mandate[mcp]"`, but the PyPI project named

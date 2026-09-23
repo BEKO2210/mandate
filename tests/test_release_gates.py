@@ -1,4 +1,4 @@
-"""Release gates G235-G236 and G253.
+"""Release gates G235-G236 and G253-G254.
 
 The gateway's `/v1/info` reported version 0.5.0 through four releases,
 because the number was typed into the module once. The same drift the
@@ -13,6 +13,7 @@ PyPI, every install line points at the repository.
 from __future__ import annotations
 
 import re
+import shlex
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -45,10 +46,50 @@ def test_g236_readme_and_changelog_name_the_shipped_version():
 REPO = "git+https://github.com/BEKO2210/mandate"
 
 
+def _pypi_mandate_targets(line: str) -> list[str]:
+    """The arguments of a `pip install` line that would fetch `mandate` from
+    PyPI. Only the command counts: a repository URL in a trailing comment
+    does not change what pip resolves."""
+    command = line.split("pip install", 1)[1]
+    # The command ends where the prose, markup or shell comment around it starts.
+    command = re.split(r"`|<|\s#", command, maxsplit=1)[0]
+    # A quote left open belongs to the string the line sits in (a Python
+    # constant, say); trim it. What still does not parse is split on spaces,
+    # which can only flag more, never less.
+    args = command.split()
+    while command:
+        try:
+            args = shlex.split(command)
+            break
+        except ValueError:
+            if command[-1] not in "'\")`,.;":
+                break
+            command = command[:-1]
+    bad, editable = [], False
+    for arg in args:
+        if arg in ("-e", "--editable"):
+            editable = True
+            continue
+        if arg.startswith("-"):
+            continue
+        if "mandate" in arg.lower() and REPO not in arg and not editable:
+            bad.append(arg)
+        editable = False
+    return bad
+
+
 def test_g253_no_install_line_resolves_mandate_from_pypi():
     """`pip install mandate…` without a direct reference asks PyPI for a name
-    this project does not own. Every line that installs Mandate names the
-    repository (or a local checkout) instead."""
+    this project does not own. Every argument that installs Mandate names the
+    repository (or is a local checkout installed with -e) instead."""
+    # The check reads the argument, not the line.
+    assert _pypi_mandate_targets(f"pip install mandate  # {REPO}") == ["mandate"]
+    assert _pypi_mandate_targets(f'pip install "mandate[mcp]" "other @ {REPO}"') == ["mandate[mcp]"]
+    assert _pypi_mandate_targets(f'pip install "mandate[mcp] @ {REPO}"') == []
+    assert _pypi_mandate_targets('pip install -e "./mandate[mcp]"') == []
+    assert _pypi_mandate_targets(f"""INSTALL = 'pip install "mandate[mcp] @ {REPO}"'""") == []
+    assert _pypi_mandate_targets("""INSTALL = 'pip install "mandate[mcp]"'""") == ["mandate[mcp]"]
+
     sources = [Path("README.md"), Path("site/index.html"), *Path("docs").glob("*.md"), *Path("mandate").rglob("*.py")]
     bad, found = [], 0
     for path in sources:
@@ -56,7 +97,17 @@ def test_g253_no_install_line_resolves_mandate_from_pypi():
             if "pip install" not in line or "mandate" not in line.split("pip install", 1)[1]:
                 continue
             found += 1
-            if REPO not in line and " -e " not in f" {line} ":
+            if _pypi_mandate_targets(line):
                 bad.append(f"{path}: {line.strip()}")
     assert not bad, "install lines that would fetch `mandate` from PyPI:\n" + "\n".join(bad)
     assert found, "the documentation must say how to install"
+
+
+def test_g254_the_release_workflow_holds_no_token():
+    """A token in the repository or its secrets is a credential that outlives
+    the release it was made for. Publishing, when it comes, uses Trusted
+    Publishing; until then the workflow uploads nothing."""
+    workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
+    for leak in ("password:", "PYPI_TOKEN", "PYPI_API_TOKEN", "${{ secrets."):
+        assert leak not in workflow, leak
+    assert "twine check --strict" in workflow and "/tmp/clean/bin/mandate demo" in workflow

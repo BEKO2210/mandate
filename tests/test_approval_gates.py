@@ -109,6 +109,9 @@ def test_g251_an_allow_list_is_not_passed_by_leaving_the_counterparty_out(tmp_pa
             akp, grant["id"], action="purchase.office", amount=10, counterparty="paper-co.example",
         ))
         moves_no_money = engine.submit_intent(_intent(akp, grant["id"], action="purchase.office"))
+        names_a_stranger = engine.submit_intent(_intent(
+            akp, grant["id"], action="purchase.office", counterparty="shady.example",
+        ))
     finally:
         dummy.stop()
 
@@ -117,6 +120,10 @@ def test_g251_an_allow_list_is_not_passed_by_leaving_the_counterparty_out(tmp_pa
     assert named["outcome"] == "AUTHORIZED", named["decision"]["reasons"]
     # The list names who may be paid; a call that pays nobody is not its to refuse.
     assert moves_no_money["outcome"] == "AUTHORIZED", moves_no_money["decision"]["reasons"]
+    # But a name the list does not know is refused with or without an amount:
+    # a counterparty is also who is addressed — a recipient, not only a payee.
+    assert names_a_stranger["outcome"] == "DENIED"
+    assert "counterparty shady.example not in allow-list" in names_a_stranger["decision"]["reasons"]
 
 
 def test_g252_a_tool_call_without_its_counterparty_is_not_signed(tmp_path):
@@ -126,6 +133,7 @@ def test_g252_a_tool_call_without_its_counterparty_is_not_signed(tmp_path):
     for args in (
         {"amount": 10, "currency": "EUR"},                    # vendor absent
         {"amount": 10, "currency": "EUR", "vendor": ""},      # vendor empty
+        {"amount": 10, "currency": "EUR", "vendor": 123},     # vendor not a string
         {"amount": 10, "currency": "EUR", "vendor": "x" * 300},  # would be cut to fit
     ):
         decision = guard.call("pay_invoice", args)

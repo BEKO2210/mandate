@@ -4,6 +4,17 @@ Enforcement gateway for AI-agent grants.
 
 An agent cannot call a protected upstream unless the gateway has a currently valid principal authorization — and cannot reach the gateway at all without a key.
 
+## Install
+
+```bash
+pip install "mandate[mcp] @ git+https://github.com/BEKO2210/mandate"
+mandate demo      # a signed, budgeted purchase, end to end
+```
+
+Mandate is not on PyPI yet. The PyPI project named `mandate` is an unrelated
+package, so install from the repository — or from a checkout with
+`pip install -e ".[mcp]"`.
+
 ## What v0.9.0 adds
 
 The gaps the last releases listed as open, closed — each reproduced first,
@@ -223,7 +234,15 @@ that defaults to `"default"`.
 
 ## What this does not do
 
-MCP, A2A, EUDI, wallets, UI, subdelegation, organization credentials, marketplace, payments, perfect exactly-once HTTP.
+- Guess intent. Every decision is deterministic policy over signed fields —
+  scopes, amounts, budgets, counterparties, audience. What an agent *meant* is
+  bounded by how narrowly the grant is written, and by human approval above a
+  threshold, not by a model's reading of it.
+- Move money. Mandate authorizes a call to a payment or ordering API; it is not
+  one.
+- Speak MCP over HTTP or SSE. The guard uses stdio on both sides.
+- A2A, EUDI, wallets, a UI, subdelegation, organization credentials, a
+  marketplace, or perfect exactly-once HTTP.
 
 An admin API for routes and keys is not implemented; configuration is a file
 and keys are managed with `mandate keys`.
