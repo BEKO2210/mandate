@@ -123,7 +123,10 @@ def _seconds(value: Any, where: str) -> float:
 
 def _base_url(value: Any, where: str) -> str:
     url = _str(value, where)
-    parsed = urlparse(url)
+    try:
+        parsed = urlparse(url)
+    except ValueError as exc:  # e.g. an unclosed "[" in the authority
+        raise GatewayConfigError(f"{where} is not a valid URL: {exc}") from exc
     if parsed.scheme not in {"http", "https"}:
         raise GatewayConfigError(f"{where} must be http or https")
     if not parsed.hostname:

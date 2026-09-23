@@ -1,4 +1,4 @@
-"""Gates G237-G243, from the review of v0.9.0.
+"""Gates G237-G247, from the reviews of v0.9.0.
 
 Each one is a finding that held up when checked against the code. The most
 serious: a Vault signer block with `"allow_insecure": "false"` — a string —
@@ -25,6 +25,7 @@ from mandate.gateway_config import GatewayConfigError, parse_gateway_config
 from mandate.ledger import Ledger
 from mandate.mcp.config import parse_config
 from mandate.mcp.mapping import MappingError
+from mandate.routes import Route
 from mandate.signing import SigningError, check_signer_block
 from mandate.witness import WitnessError, check_witness_url, post_anchors
 
@@ -179,3 +180,54 @@ def test_g243_workers_opening_an_old_ledger_together_all_start(tmp_path):
     assert [w.exitcode for w in workers] == [0] * 6
     with Ledger(path).tx() as tx:
         assert not tx.consume_nonce("a", "n", "r2"), "the old nonce survived the migration"
+
+
+def test_g244_only_the_active_key_can_hand_over(tmp_path):
+    """From 3170b1a, which reached main unreviewed. An engine configured with
+    some other key used to append a rotation signed by that key; the chain's
+    own verifier then rejected the entry, and the chain it meant to extend was
+    broken by the act of extending it."""
+    from mandate.crypto import KeyPair
+    from mandate.engine import Engine
+
+    engine, db, _, _ = _chain_world(tmp_path, calls=2)
+    head = engine.chain_head()
+    stranger = Engine(ledger=Ledger(db))  # a different key on the same ledger
+    with pytest.raises(MandateError, match="only the active key can hand over"):
+        stranger.rotate_signer(KeyPair.generate().did())
+    assert engine.chain_head()["entry_hash"] == head["entry_hash"], "nothing was appended"
+    assert engine.verify_chain().ok
+
+
+def test_g245_an_unknown_signer_kind_fails_when_the_file_is_read(tmp_path):
+    for name in ("agent_signer", "enforcer_signer", "principal_signer"):
+        with pytest.raises(MappingError, match=f"{name}: unknown signer kind"):
+            parse_config({**MCP, name: {"kind": "azure-vault"}})
+
+
+def test_g246_a_malformed_url_is_a_configuration_error_not_a_crash(tmp_path):
+    route = {**GATEWAY["routes"][0], "base_url": "https://[::1"}
+    with pytest.raises(GatewayConfigError, match="not a valid URL"):
+        parse_gateway_config({**GATEWAY, "routes": [route]}, tmp_path)
+    with pytest.raises(WitnessError, match="invalid"):
+        check_witness_url("http://[::1/anchors")
+
+
+def test_g247_an_ipv6_upstream_gets_a_valid_host_header(monkeypatch):
+    import httpx
+
+    sent = {}
+
+    def capture(self, method, url, **kwargs):
+        sent["url"], sent["headers"], sent["ext"] = url, kwargs["headers"], kwargs.get("extensions")
+        return httpx.Response(200, content=b"{}")
+
+    monkeypatch.setattr(httpx.Client, "request", capture)
+    # A public literal: loopback is blocked by the destination policy, rightly.
+    # Nothing is sent; the request is captured above.
+    route = Route(audience="mandate://t", base_url="http://[2606:4700:4700::1111]:8443",
+                  allowed_methods=("POST",), allowed_paths=("/do",))
+    result = UpstreamExecutor().forward(route, "POST", "/do", b"{}", "idem-g247")
+    assert result.state == "EXECUTED", result.error
+    assert sent["headers"]["Host"] == "[2606:4700:4700::1111]:8443"
+    assert sent["url"] == "http://[2606:4700:4700::1111]:8443/do"

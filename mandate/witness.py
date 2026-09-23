@@ -40,7 +40,10 @@ class WitnessError(Exception):
 
 def check_witness_url(url: str) -> str:
     """HTTPS, or plain HTTP to a loopback address (a local relay or a test)."""
-    parsed = urlparse(url)
+    try:
+        parsed = urlparse(url)
+    except ValueError as exc:
+        raise WitnessError(f"witness URL is invalid: {exc}") from exc
     if parsed.scheme not in {"http", "https"} or not parsed.hostname:
         raise WitnessError(f"witness must be an http(s) URL, got {url!r}")
     try:

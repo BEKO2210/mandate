@@ -456,7 +456,9 @@ def _guard_world(tmp_path, upstream, agent_signer=None):
     raw = json.loads(json.dumps(CONFIG))
     raw["store"] = str(tmp_path / "store")
     if agent_signer is not None:
-        raw["agent_signer"] = {"kind": "fake-kms"}
+        # A real kind's shape: the configuration parser checks it. Only the
+        # object it resolves to is swapped for the double below.
+        raw["agent_signer"] = {"kind": "aws-kms", "key_id": "arn:aws:kms:eu:1:key/test"}
     config = parse_config(raw)
     if agent_signer is not None:
         config.build_agent_signer = lambda: agent_signer

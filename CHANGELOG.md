@@ -88,8 +88,18 @@ against it (G202–G236).
 - `chain verify --anchors` exits non-zero when any line of the anchor file is
   not an anchor: a damaged only-anchor used to leave a truncated chain
   passing. (G242)
-- The nonce-column migration runs under a write lock, so workers opening an
-  old ledger together do not die on a duplicate column. (G243)
+- Every schema check and migration runs inside one write transaction, so
+  workers opening an old ledger together do not die on a duplicate column.
+  `executescript`, which commits and releases the lock, is no longer used
+  during migration. (G243)
+- `rotate_signer` (from 3170b1a, which reached `main` unreviewed) refuses to
+  run on an engine whose key is not the chain's active signer. It used to
+  append a rotation the chain's own verifier rejects. (G244)
+- An unknown signer kind in the MCP guard's file is refused when the file is
+  read, not when the signer is first built. (G245)
+- A malformed URL (an unclosed `[`) is a configuration error, not a crash.
+  (G246)
+- An IPv6 upstream gets a bracketed `Host` header. (G247)
 
 ### Changed
 

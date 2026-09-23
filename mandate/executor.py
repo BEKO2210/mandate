@@ -224,7 +224,10 @@ class UpstreamExecutor:
             # so the request went to a path the receipt never named.
             target = parsed.path + (f"?{parsed.query}" if parsed.query else "")
             connect_url = f"{parsed.scheme}://{ip_lit}:{port}{target}"
-            headers["Host"] = host if not parsed.port else f"{host}:{parsed.port}"
+            # An IPv6 literal needs its brackets back in an authority; SNI and
+            # certificate matching take the bare address.
+            authority = f"[{host}]" if ":" in host else host
+            headers["Host"] = authority if not parsed.port else f"{authority}:{parsed.port}"
             if parsed.scheme == "https":
                 extensions["sni_hostname"] = host
 

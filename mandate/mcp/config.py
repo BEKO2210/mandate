@@ -13,7 +13,7 @@ from typing import Any
 
 from ..auth import DEFAULT_TENANT
 from ..models import Constraint
-from ..signing import SIGNER_KEYS, Signer, SigningError, check_signer_block, signer_from_config
+from ..signing import Signer, SigningError, check_signer_block, signer_from_config
 from .mapping import MappingError, ToolMapping, ToolRule
 
 DEFAULT_STORE = ".mandate-mcp"
@@ -184,7 +184,7 @@ def parse_config(raw: dict[str, Any]) -> GuardConfig:
             raise MappingError(f"{name} must be an object naming a signer kind")
         if isinstance(block, dict) and not block.get("kind"):
             raise MappingError(f"{name} needs a kind (file, aws-kms, gcp-kms, …)")
-        if isinstance(block, dict) and block.get("kind") in SIGNER_KEYS:
+        if isinstance(block, dict):
             try:
                 check_signer_block(block)
             except SigningError as exc:

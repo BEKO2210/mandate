@@ -270,6 +270,14 @@ class Engine:
             # Review found it; the guard was half-right, which is the worst
             # kind of right.
             active = head["outcome"] if chainlib.is_rotation(head) else head["signer"]
+            # The rotation entry is signed by the key leaving. An engine
+            # configured with any other key would write an entry the chain's
+            # own verifier rejects, breaking the chain it meant to extend.
+            if self.enforcer.did() != active:
+                raise MandateError(
+                    f"this engine signs as {self.enforcer.did()}, but the chain's active "
+                    f"signer is {active}; only the active key can hand over"
+                )
             if new_signer == active:
                 # An operator who believes they rotated and did not is worse
                 # off than one who gets an error: they now trust a key that
