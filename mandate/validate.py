@@ -134,6 +134,10 @@ NONCE_RETENTION_S = INTENT_MAX_AGE_S + CLOCK_SKEW_S + 60
 
 
 def check_freshness(created_at: str, max_age_s: int = INTENT_MAX_AGE_S, what: str = "intent") -> None:
+    """Reject a timestamp that is not parseable, too old, or too far in the future.
+
+    `what` names the kind of thing being checked, for the error message only.
+    """
     from datetime import datetime, timezone
 
     try:
