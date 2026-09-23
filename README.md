@@ -8,7 +8,7 @@ An agent cannot call a protected upstream unless the gateway has a currently val
 
 ```bash
 pip install "mandate[mcp] @ git+https://github.com/BEKO2210/mandate"
-mandate demo      # a signed, budgeted purchase, end to end
+mandate demo shop   # an agent buying through the MCP guard: limits, a denial, a human approval
 ```
 
 Mandate is not on PyPI yet. The PyPI project named `mandate` is an unrelated

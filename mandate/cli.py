@@ -80,7 +80,12 @@ def _resolution(engine, args) -> int:
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="mandate", description="Identity + Permission + Transaction OS for AI agents")
     sub = p.add_subparsers(dest="cmd", required=True)
-    sub.add_parser("demo", help="Run the Belkis procurement scenario")
+    demo = sub.add_parser("demo", help="Run a demo scenario")
+    demo.add_argument(
+        "scenario", nargs="?", default="belkis", choices=["belkis", "shop"],
+        help="belkis: the engine alone. shop: an agent buying through the MCP guard (needs the mcp extra)",
+    )
+    demo.add_argument("--dir", default=None, help="shop: where to keep its files (default: a new temp dir)")
     v = sub.add_parser("verify", help="Verify a signed Mandate object")
     v.add_argument("file")
 
@@ -110,6 +115,10 @@ def main(argv: list[str] | None = None) -> int:
     mcp_sub = mcp_cmd.add_subparsers(dest="mcp_cmd", required=True)
     mcp_init = mcp_sub.add_parser("init", help="Create the principal, agent and grant")
     mcp_init.add_argument("--config", required=True)
+    mcp_init.add_argument(
+        "--example", choices=["shop"], default=None,
+        help="Write a ready configuration first: shop is the demo shop, with a procurement grant",
+    )
     mcp_serve = mcp_sub.add_parser("serve", help="Serve the guard on stdio")
     mcp_serve.add_argument("--config", required=True)
     mcp_pending = mcp_sub.add_parser("pending", help="List calls waiting for your approval")
@@ -200,6 +209,16 @@ def main(argv: list[str] | None = None) -> int:
     args = p.parse_args(argv)
 
     if args.cmd == "demo":
+        if args.scenario == "shop":
+            try:
+                import mcp  # noqa: F401
+            except ImportError:
+                print(f"the shop demo runs the MCP guard, which needs the mcp extra: {INSTALL_MCP}", file=sys.stderr)
+                return 1
+            from .demo_shop.scenario import EXPECTED, run
+
+            result = run(args.dir)
+            return 0 if result["outcomes"] == EXPECTED and result["chain_ok"] else 1
         run_belkis_demo()
         return 0
 
@@ -234,6 +253,18 @@ INSTALL_MCP = 'pip install "mandate[mcp] @ git+https://github.com/BEKO2210/manda
 def _mcp(args) -> int:
     from .mcp.config import load_config, read_state
     from .mcp.mapping import MappingError
+
+    if getattr(args, "example", None) == "shop":
+        from .demo_shop.config import guard_config
+
+        path = Path(args.config)
+        if path.exists():
+            print(f"{path} exists; --example writes a new file and will not overwrite one", file=sys.stderr)
+            return 1
+        path.parent.mkdir(parents=True, exist_ok=True)
+        orders = path.resolve().parent / "orders.jsonl"
+        path.write_text(json.dumps(guard_config(str(orders), store=".mandate-shop"), indent=2) + "\n", encoding="utf-8")
+        print(f"wrote {path}: the demo shop behind a procurement grant (orders go to {orders})")
 
     try:
         config = load_config(args.config)

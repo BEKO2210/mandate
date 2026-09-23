@@ -1,0 +1,40 @@
+{
+  "audience": "mandate://shop",
+  "server_name": "mandate_shop",
+  "store": ".mandate-shop",
+  "upstream": {
+    "command": "python3",
+    "args": [
+      "-m",
+      "mandate.demo_shop.server",
+      "--orders",
+      "orders.jsonl"
+    ],
+    "cwd": "."
+  },
+  "tools": {
+    "list_products": {
+      "action": "shop.catalog.read"
+    },
+    "buy": {
+      "action": "shop.order.place",
+      "amount_from": "amount",
+      "currency_from": "currency",
+      "counterparty_from": "vendor"
+    }
+  },
+  "grant": {
+    "organization": "Demo Co",
+    "purpose": "office supplies",
+    "constraints": {
+      "currency": "EUR",
+      "max_amount": 500,
+      "max_daily_amount": 300,
+      "require_human_above": 100,
+      "counterparties_allow": [
+        "paper-co.example",
+        "office-depot.example"
+      ]
+    }
+  }
+}

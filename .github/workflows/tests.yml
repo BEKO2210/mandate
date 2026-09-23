@@ -57,6 +57,9 @@ jobs:
       - name: Run the demo scenario
         run: python -m mandate demo
 
+      - name: Run the shop demo through the MCP guard
+        run: python -m mandate demo shop
+
   docker:
     runs-on: ubuntu-latest
     steps:

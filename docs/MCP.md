@@ -77,6 +77,12 @@ every client that starts the guard finds the same store.
 
 ## Connect Claude Code or Cursor
 
+To try it on something harmless first, `mandate mcp init --config guard.json
+--example shop` writes a configuration for the demo shop — a procurement grant
+with a daily budget, two allowed vendors and approval above 100 EUR — and
+`mandate demo shop` plays it through without a model. See
+[examples/mcp_shop](../examples/mcp_shop/README.md).
+
 ```bash
 mandate mcp init --config guard.json
 ```
