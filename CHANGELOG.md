@@ -3,6 +3,22 @@
 All notable changes to this project are documented here.
 This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Security
+- **An approval without `created_at` was treated as created now**, so a
+  signed approval stayed usable for as long as anyone kept it — the fault
+  v0.9.0 closed for intents, still open one call later. `created_at` is now
+  required on approvals (ten-minute window), and a malformed `not_after` is
+  a refusal instead of an unhandled error (a 500 at the gateway).
+  **Breaking** for API clients that build their own approvals without
+  `created_at`; `Engine.approve` has always set it. (G249, G250)
+- **A counterparty allow-list could be passed by naming no counterparty.**
+  The list was consulted only when an intent carried one. A grant with
+  `counterparties_allow` now denies an intent without a counterparty, and an
+  MCP tool configured with `counterparty_from` refuses a call whose
+  argument is missing, empty, or too long to judge as sent. (G251, G252)
+
 ## [0.9.0] — 2026-09-22
 
 Every gap the previous releases listed as open, closed or bounded. Each fix

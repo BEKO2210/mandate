@@ -617,14 +617,21 @@ class Engine:
         if a.get("principal_did") and a["principal_did"] != signer:
             raise MandateError("approval principal mismatch")
 
+        # Required, not defaulted to now: an undated approval stayed usable
+        # for as long as anyone kept it, the fault v0.9.0 closed for intents.
+        if not a.get("created_at"):
+            raise MandateError("invalid approval: created_at is required")
         try:
-            check_freshness(a.get("created_at") or iso(utcnow()), max_age_s=600)
+            check_freshness(a["created_at"], max_age_s=600, what="approval")
         except ValidationError as exc:
             raise MandateError(str(exc)) from exc
         if a.get("not_after"):
             from datetime import datetime, timezone
 
-            exp = datetime.strptime(a["not_after"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+            try:
+                exp = datetime.strptime(a["not_after"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+            except (TypeError, ValueError) as exc:
+                raise MandateError("invalid approval: not_after is not a timestamp") from exc
             if utcnow() > exp:
                 raise MandateError("approval expired")
 

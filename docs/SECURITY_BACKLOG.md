@@ -237,6 +237,29 @@ package version now, and the README, changelog and pyproject are pinned to it.
 
 Covered by G233–G236.
 
+## SH-16 — An approval must carry its own creation time — DONE (unreleased)
+
+`submit_approval` read a missing `created_at` as "now", the same default
+SH-15 removed for intents: an approval signed once and kept could be replayed
+at any later time while its receipt waited. Only the receipt's own state
+stood in the way. `created_at` is required, the window is ten minutes, and a
+malformed `not_after` is refused rather than raised.
+
+Covered by G249–G250.
+
+## SH-17 — An allow-list is not skipped by an absent counterparty — DONE (unreleased)
+
+`counterparties_allow` was checked only `if intent.counterparty`. An MCP call
+that simply left its vendor argument out reached the upstream under a grant
+that named the only vendors it could pay. A grant with an allow-list now
+denies an intent without a counterparty, and a tool mapped with
+`counterparty_from` refuses the call when the argument is missing, empty, or
+longer than the field can hold — cut to fit, the value judged would not be
+the value sent. A deny-list still applies only to a named counterparty; it
+cannot express "unknown is bad", and an allow-list is how to say that.
+
+Covered by G251–G252.
+
 ## Residual / next
 
 - A chain cannot prove what was removed from its own end; truncation is only

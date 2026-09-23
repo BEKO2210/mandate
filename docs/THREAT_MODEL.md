@@ -37,6 +37,9 @@ by then its intent fails the freshness check anyway. `created_at` is
 required: a missing one used to be read as "now", which made that intent
 fresh forever and left an unbounded nonce table as its only defence.
 
+A human approval is held to the same rule: it carries a signed `created_at`,
+is accepted for ten minutes, and is refused without one.
+
 ## Money
 
 Amounts are integer minor units everywhere past validation. A float cannot

@@ -53,6 +53,12 @@ the model cannot call what the configuration never considered. Set
 string amount would have to be parsed, and a parse is a guess — the guard
 refuses instead.
 
+`counterparty_from` names the argument that says who is paid or addressed —
+a vendor, a recipient. Once configured it is required: a call without it, with
+an empty value, or with one longer than 256 characters is refused before
+anything is signed, so a grant's `counterparties_allow` cannot be skipped by
+leaving the name out.
+
 ## Run
 
 ```bash
