@@ -1,4 +1,4 @@
-# Threat model (v0.7.0)
+# Threat model (v0.9.0)
 
 TRUSTED: gateway, KeyProvider, route registry, SQLite tx layer, executor code, server-side Route.network_policy, the api_keys table.
 UNTRUSTED: agent, agent JSON, network, unsigned human input, upstream bodies, DNS answers.
@@ -6,7 +6,10 @@ ASSETS: grants, approvals, enforcer key, budgets, receipts, audit.
 
 Budget windows are bound at authorization. Execution must not move spend onto a later UTC day.
 
-DNS resolution is checked before connect. HTTP pins the checked IP. HTTPS still uses the hostname for SNI, so a resolver that changes answers between check and connect is a residual risk.
+DNS is resolved once, the address is checked, and the connection goes to that
+address for HTTP and HTTPS alike; the name is used only for SNI, certificate
+verification and `Host`. Proxy variables in the environment are ignored,
+because a proxy would resolve the name again.
 
 ## Execution-time revalidation
 
@@ -21,8 +24,18 @@ intent. Previously claimed executions remain single-use.
 
 The execution claim is the ordering boundary: revocations committed before the
 claim prevent dispatch. A revocation after the claim cannot cancel an in-flight
-HTTP operation. This change does not provide exact request-byte binding, transport
-hardening, crash reconciliation, or immutable evidence; those remain follow-ups.
+HTTP operation. Request-byte binding, crash reconciliation and the receipt
+chain are described below.
+
+## Replay
+
+An intent carries a nonce and a `created_at`; both are signed. It is accepted
+while it is at most five minutes old and at most thirty seconds ahead of the
+gateway's clock, and its nonce is accepted once per tenant and audience. A
+nonce is remembered for that window plus a minute and then forgotten, because
+by then its intent fails the freshness check anyway. `created_at` is
+required: a missing one used to be read as "now", which made that intent
+fresh forever and left an unbounded nonce table as its only defence.
 
 ## Money
 
@@ -41,7 +54,11 @@ dispatched. If this process dies before the result transaction, the receipt
 stays EXECUTING until `reconcile_stale_executions()` moves it to
 EXECUTION_UNKNOWN; the gateway runs that at startup. Whether the upstream saw
 the request is unknowable from here, so the reservation is kept and freeing it
-stays a human decision. An exception out of the executor is treated the same
+stays a human decision — `mandate gateway resolve` (or `mandate mcp resolve`)
+records that decision, signed and chained, with the operator's name and
+reason. A receipt from before budget bindings that records no reservation day
+cannot be settled until the operator names the day; the engine does not guess
+it. An exception out of the executor is treated the same
 way. Neither path re-dispatches: the execution claim remains single-use.
 
 ## Request composition
@@ -74,10 +91,18 @@ password-hashing cost per request would buy nothing. A stolen key is contained
 by disabling it, by its expiry, or by rotating it; it cannot be recovered from
 the ledger.
 
-The rate limiter is in-process. It bounds one gateway process, which is the
-same scope as the single-file SQLite ledger it protects. Running several
-gateway processes against one ledger would need a shared limiter, and is not
-supported today.
+The rate limit is kept in the ledger, so every gateway process serving one
+ledger draws from the same bucket per key; an in-memory bucket would multiply
+the limit by the number of workers. A check that cannot be recorded fails the
+request rather than letting it through unmetered. The bucket uses wall time,
+and a clock stepped backwards refills nothing.
+
+The destination policy is enforced at the socket, not only at the name. The
+name is resolved once, the address is checked, and the connection is made to
+that address — for HTTPS too, with the name kept for SNI and certificate
+verification. Proxy environment variables are ignored, because a proxy
+resolves the name itself and would connect to an address the policy never
+saw. Certificate verification cannot be turned off.
 
 ## The MCP guard
 
@@ -123,9 +148,10 @@ will not verify later. A signer that cannot sign refuses the call outright:
 the operator's log, not the model, because a refusal is tool output and a
 signing error can name hosts and paths.
 
-The principal key is still local by default. Issuing and revoking grants is an
-operator action, so the private key that does it does not belong to a serving
-process at all — put it in a key manager too, or keep it off the host entirely.
+The principal key is a local development file unless `principal_signer` names
+a key manager. Issuing and revoking grants is an operator action, so the
+private key that does it does not belong to a serving process at all — with
+`principal_signer` it is used by `mcp init` and never exists on the host.
 
 ## The operator
 
@@ -143,13 +169,15 @@ it against the receipts it commits to. The second half is what catches a
 deleted or altered row; a chain that only verifies itself catches nothing, as
 the first implementation here demonstrated.
 
-Three limits, none of them fixable from inside the database:
+The limits, none of them fixable from inside the database:
 
 * **Truncation.** A prefix of a valid chain is a valid chain. Detecting a
   deletion from the end needs a head kept somewhere the operator does not
-  control; `/v1/info` and `mandate chain head` hand one out, and
-  `--expect-head` checks against it. Without that, the chain proves that what
-  remains was not edited, not that nothing is missing.
+  control; `/v1/info` and `mandate chain head` hand one out, the gateway's
+  `anchoring` posts them to a witness on a schedule, and `--expect-head` or
+  `--anchors` checks against them. Without that, the chain proves that what
+  remains was not edited, not that nothing is missing. Choosing a witness the
+  operator does not control is the one step no software can take for them.
 * **The signing key.** Anyone holding the enforcer key can re-sign the receipts
   and the chain together. The chain raises editing history from an UPDATE to a
   key compromise; it does not survive one. `mandate chain rotate` bounds how

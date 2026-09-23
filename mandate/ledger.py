@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import threading
+import time
 from decimal import ROUND_HALF_UP, Decimal
 from pathlib import Path
 from typing import Any
@@ -13,7 +14,8 @@ from .chain import body_hash as chain_body_hash
 from .chain import ROTATION_ID, loads_strict
 from .crypto import iso, utcnow, verify_object
 from .money import exponent, from_minor
-from .states import InvalidTransition, assert_transition
+from .states import assert_transition
+from .validate import NONCE_RETENTION_S
 
 
 class StorageError(Exception):
@@ -45,8 +47,19 @@ class Ledger:
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA foreign_keys=ON")
         self._conn.execute("PRAGMA busy_timeout=5000")
-        self._init()
-        self._migrate()
+        # Every schema check and every DDL statement runs inside one write
+        # transaction, re-checked after the lock is held. Workers opening an
+        # old ledger together used to read the schema outside any lock, both
+        # see a column missing, and the second ALTER died on a duplicate
+        # column — so a gateway could fail to start during an upgrade.
+        self._conn.execute("BEGIN IMMEDIATE")
+        try:
+            self._init()
+            self._migrate()
+            self._conn.execute("COMMIT")
+        except BaseException:
+            self._conn.execute("ROLLBACK")
+            raise
 
     def inject_failure(self, on: bool = True) -> None:
         self._fail = on
@@ -55,8 +68,24 @@ class Ledger:
         with self._lock:
             self._conn.close()
 
+    def _script(self, sql: str) -> None:
+        """Run several statements inside the caller's transaction.
+
+        `executescript` would commit the open transaction first and release
+        the write lock the migration relies on, so the statements are split
+        with SQLite's own completeness test and executed one by one.
+        """
+        pending = ""
+        for line in sql.splitlines(keepends=True):
+            pending += line
+            if sqlite3.complete_statement(pending):
+                self._conn.execute(pending)
+                pending = ""
+        if pending.strip():
+            raise StorageError("incomplete SQL statement in a migration script")
+
     def _init(self) -> None:
-        self._conn.executescript(
+        self._script(
             """
             CREATE TABLE IF NOT EXISTS principals (
               did TEXT PRIMARY KEY,
@@ -190,6 +219,19 @@ class Ledger:
         self._conn.execute(
             "CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)"
         )
+        # Token buckets for the gateway's rate limit. They live here rather
+        # than in a process's memory so that every gateway process serving
+        # this ledger draws from the same bucket; an in-memory limit is
+        # multiplied by the number of workers.
+        self._conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS rate_buckets (
+              key TEXT PRIMARY KEY,
+              tokens REAL NOT NULL,
+              updated REAL NOT NULL
+            )
+            """
+        )
         if self._schema_version() < 2:
             self._migrate_amounts_to_minor()
             self._conn.execute(
@@ -202,46 +244,54 @@ class Ledger:
             )
         if self._schema_version() < 4:
             self._migrate_start_chain()
+        self._migrate_nonce_timestamps()
+
+    def _migrate_nonce_timestamps(self) -> None:
+        """Runs under the write transaction Ledger.__init__ holds, so two
+        workers cannot both see the column missing."""
+        cols = {row[1] for row in self._conn.execute("PRAGMA table_info(nonces)")}
+        if "consumed_at" not in cols:
+            # Rows from before this column get the migration time: they are
+            # kept one full retention window from now, never less.
+            self._conn.execute("ALTER TABLE nonces ADD COLUMN consumed_at REAL")
+            self._conn.execute("UPDATE nonces SET consumed_at=?", (time.time(),))
+        self._conn.execute(
+            "CREATE INDEX IF NOT EXISTS nonces_consumed_at ON nonces(consumed_at)"
+        )
 
     def _migrate_start_chain(self) -> None:
         """Start the chain, and snapshot the receipts that predate it.
 
-        One transaction, with the version re-checked after the write lock is
-        held. Without that, two processes could both see version 3, one could
-        finish and write a chained receipt, and the other could then count that
-        receipt into the baseline — inflating the very number that bounds how
-        many unchained receipts are tolerated.
+        Runs inside the write transaction Ledger.__init__ holds, with the
+        version re-checked after the lock is taken. Without that, two
+        processes could both see version 3, one could finish and write a
+        chained receipt, and the other could then count that receipt into the
+        baseline — inflating the very number that bounds how many unchained
+        receipts are tolerated.
 
         The chain starts empty. Seeding it from the receipts that already exist
         would produce a chain that looks like it covered them all along; it did
         not, and a verifier has to be able to say so.
         """
-        self._conn.execute("BEGIN IMMEDIATE")
-        try:
-            if self._schema_version() >= 4:
-                self._conn.execute("ROLLBACK")
-                return
-            legacy = {
-                row["tenant"]: row["n"]
-                for row in self._conn.execute(
-                    "SELECT tenant, COUNT(*) AS n FROM receipts GROUP BY tenant"
-                )
-            }
-            self._conn.execute(
-                "INSERT OR REPLACE INTO meta(key, value) VALUES ('chain_started_at', ?)",
-                (iso(utcnow()),),
+        if self._schema_version() >= 4:
+            return
+        legacy = {
+            row["tenant"]: row["n"]
+            for row in self._conn.execute(
+                "SELECT tenant, COUNT(*) AS n FROM receipts GROUP BY tenant"
             )
-            self._conn.execute(
-                "INSERT OR REPLACE INTO meta(key, value) VALUES ('chain_legacy', ?)",
-                (json.dumps(legacy, sort_keys=True),),
-            )
-            self._conn.execute(
-                "INSERT OR REPLACE INTO meta(key, value) VALUES ('schema_version', '4')"
-            )
-            self._conn.execute("COMMIT")
-        except Exception:
-            self._conn.execute("ROLLBACK")
-            raise
+        }
+        self._conn.execute(
+            "INSERT OR REPLACE INTO meta(key, value) VALUES ('chain_started_at', ?)",
+            (iso(utcnow()),),
+        )
+        self._conn.execute(
+            "INSERT OR REPLACE INTO meta(key, value) VALUES ('chain_legacy', ?)",
+            (json.dumps(legacy, sort_keys=True),),
+        )
+        self._conn.execute(
+            "INSERT OR REPLACE INTO meta(key, value) VALUES ('schema_version', '4')"
+        )
 
     def _migrate_add_tenancy(self) -> None:
         """Every record belongs to a tenant. Pre-0.4 rows join the default one."""
@@ -258,7 +308,7 @@ class Ledger:
         if "tenant" not in nonce_cols:
             # The primary key itself has to gain the tenant, otherwise one
             # tenant could burn another tenant's nonces, so the table is rebuilt.
-            self._conn.executescript(
+            self._script(
                 """
                 CREATE TABLE nonces_v3 (
                   tenant TEXT NOT NULL,
@@ -331,8 +381,17 @@ class _Tx:
 
     def __enter__(self):
         self.l._lock.acquire()
-        self.l._check()
-        self.l._conn.execute("BEGIN IMMEDIATE")
+        # If the transaction cannot begin, __exit__ never runs, so the lock
+        # has to be given back here. Holding it would hang every later
+        # transaction in this process — and "database is locked" after the
+        # busy timeout is an ordinary outcome once several processes share
+        # the file.
+        try:
+            self.l._check()
+            self.l._conn.execute("BEGIN IMMEDIATE")
+        except BaseException:
+            self.l._lock.release()
+            raise
         return self
 
     def __exit__(self, exc_type, exc, tb):
@@ -344,6 +403,29 @@ class _Tx:
         finally:
             self.l._lock.release()
         return False
+
+    def take_rate_token(self, key: str, now: float, rate: float, capacity: float) -> float:
+        """Take one token from `key`'s bucket. Returns 0.0 if one was taken,
+        otherwise the seconds until one will be available.
+
+        The bucket's timestamp never moves backwards. A wall clock that steps
+        back and then forward again would otherwise refill the same interval
+        twice.
+        """
+        row = self.l._conn.execute(
+            "SELECT tokens, updated FROM rate_buckets WHERE key=?", (key,)
+        ).fetchone()
+        tokens, last = (capacity, now) if row is None else (row["tokens"], row["updated"])
+        tokens = min(capacity, tokens + max(0.0, now - last) * rate)
+        wait = 0.0 if tokens >= 1.0 else (1.0 - tokens) / rate
+        if wait == 0.0:
+            tokens -= 1.0
+        self.l._conn.execute(
+            "INSERT INTO rate_buckets(key, tokens, updated) VALUES (?, ?, ?) "
+            "ON CONFLICT(key) DO UPDATE SET tokens=excluded.tokens, updated=excluded.updated",
+            (key, tokens, max(now, last)),
+        )
+        return wait
 
     def put_principal(self, did: str, body: dict, tenant: str = "default") -> None:
         self.l._conn.execute(
@@ -391,12 +473,24 @@ class _Tx:
         return row["tenant"] if row else None
 
     def consume_nonce(
-        self, audience: str, nonce: str, receipt_id: str, tenant: str = "default"
+        self, audience: str, nonce: str, receipt_id: str, tenant: str = "default",
+        now: float | None = None,
     ) -> bool:
+        """Record a nonce as used; False if it already was.
+
+        A nonce only has to be remembered while the intent carrying it could
+        still pass the freshness check. Older ones are dropped here, so the
+        table holds a few minutes of traffic instead of all of it.
+        """
+        now = time.time() if now is None else now
+        self.l._conn.execute(
+            "DELETE FROM nonces WHERE consumed_at < ?", (now - NONCE_RETENTION_S,)
+        )
         try:
             self.l._conn.execute(
-                "INSERT INTO nonces(tenant, audience, nonce, receipt_id) VALUES (?,?,?,?)",
-                (tenant, audience, nonce, receipt_id),
+                "INSERT INTO nonces(tenant, audience, nonce, receipt_id, consumed_at) "
+                "VALUES (?,?,?,?,?)",
+                (tenant, audience, nonce, receipt_id, now),
             )
             return True
         except sqlite3.IntegrityError:
@@ -562,6 +656,15 @@ class _Tx:
         if not row:
             return None
         return dict(row)
+
+    def receipts_in_state(self, state: str, tenant: str | None = None) -> list[sqlite3.Row]:
+        if tenant is None:
+            return self.l._conn.execute(
+                "SELECT * FROM receipts WHERE state=? ORDER BY id", (state,)
+            ).fetchall()
+        return self.l._conn.execute(
+            "SELECT * FROM receipts WHERE state=? AND tenant=? ORDER BY id", (state, tenant)
+        ).fetchall()
 
     def cas_state(
         self, receipt_id: str, src: str, dst: str, body: dict | None = None,

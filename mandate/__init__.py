@@ -1,6 +1,6 @@
 """Mandate — Identity + Permission + Transaction OS for AI agents."""
 
-from .auth import DEFAULT_TENANT, LedgerApiKeyAuth, OpenAccess, RateLimiter, issue_api_key
+from .auth import DEFAULT_TENANT, LedgerApiKeyAuth, LedgerRateLimiter, OpenAccess, RateLimiter, issue_api_key
 from .crypto import KeyPair, sign_object, verify_object
 from .engine import Engine
 from .models import AgentCard, Constraint, Grant, Intent, Principal
@@ -8,11 +8,12 @@ from .chain import ChainReport, verify_chain
 from .policy import evaluate
 from .signing import Signer, SigningError, signer_from_config
 
-__version__ = "0.8.1"
+__version__ = "0.9.0"
 __all__ = [
     "Engine",
     "OpenAccess",
     "LedgerApiKeyAuth",
+    "LedgerRateLimiter",
     "RateLimiter",
     "issue_api_key",
     "DEFAULT_TENANT",

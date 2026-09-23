@@ -10,12 +10,12 @@ from uuid import uuid4
 
 from . import chain as chainlib
 from . import disclosure as disc
-from .crypto import KeyPair, iso, sign_object, utcnow, verify_object
+from .crypto import KeyPair, canonical_json, iso, sign_object, utcnow, verify_object
 from .auth import DEFAULT_TENANT
 from .executor import ExecutionResult
 from .keys import EphemeralKeyProvider, KeyProvider, PersistedDevKeyProvider
 from .ledger import Ledger, StorageError
-from .models import AgentCard, Constraint, Grant, Intent, Principal, Receipt, new_id
+from .models import AgentCard, Grant, Intent, Principal, Receipt, new_id
 from .money import MoneyError
 from .payload import PayloadError, body_hash, build_payload, encode
 from .policy import constraint_minor, evaluate, intent_amount_minor
@@ -38,6 +38,55 @@ from .validate import (
 
 # A claimed execution older than this is no longer in flight in this process.
 DEFAULT_EXECUTION_STALE_AFTER_S = 900
+
+#: An executor's error text goes into a signed receipt. It used to go in
+#: whole, so an upstream with a verbose error could push the receipt past
+#: its signer's message cap *after* the call had been made: the real outcome
+#: was lost and the receipt sat in EXECUTING until the next restart.
+ERROR_LIMIT = 200
+
+#: The smallest resolution the pre-dispatch size check keeps room for, so an
+#: unknown outcome can always be resolved with at least this much plain ASCII.
+_RESOLUTION_RESERVE = {"operator": 32, "reason": 128}
+
+
+def bounded_error(text: Any) -> str | None:
+    """Printable ASCII without characters JSON escapes, at most ERROR_LIMIT
+    long: exactly one byte per character in the signed receipt, whatever the
+    upstream said."""
+    if text is None:
+        return None
+    clean = "".join(
+        ("'" if ch in "\"\\" else ch) if " " <= ch <= "~" else "?" for ch in str(text)
+    )
+    return clean if len(clean) <= ERROR_LIMIT else clean[: ERROR_LIMIT - 3] + "..."
+
+
+def _largest_outcome(claim: dict[str, Any]) -> dict[str, Any]:
+    """A body at least as large as any the engine may sign for this claim
+    after dispatch: the result, a reconciler's EXECUTION_UNKNOWN, and a
+    resolution on top of either. Every variable field is at its maximum."""
+    body = dict(claim)
+    body["outcome"] = "EXECUTION_UNKNOWN"
+    execution = dict(claim["execution"])
+    execution.update(
+        state="EXECUTION_UNKNOWN",
+        http_status=999,
+        latency_ms=10**9,
+        response_hash="f" * 64,
+        error="x" * ERROR_LIMIT,  # bounded_error makes every character one byte
+        reconciled_at="0000-00-00T00:00:00Z",
+        resolution={
+            "from": "EXECUTION_UNKNOWN",
+            "decided": "EXECUTION_FAILED",
+            "by": "x" * _RESOLUTION_RESERVE["operator"],
+            "reason": "x" * _RESOLUTION_RESERVE["reason"],
+            "at": "0000-00-00T00:00:00Z",
+            "budget_day": "0000-00-00",
+        },
+    )
+    body["execution"] = execution
+    return body
 
 
 class MandateError(Exception):
@@ -221,6 +270,14 @@ class Engine:
             # Review found it; the guard was half-right, which is the worst
             # kind of right.
             active = head["outcome"] if chainlib.is_rotation(head) else head["signer"]
+            # The rotation entry is signed by the key leaving. An engine
+            # configured with any other key would write an entry the chain's
+            # own verifier rejects, breaking the chain it meant to extend.
+            if self.enforcer.did() != active:
+                raise MandateError(
+                    f"this engine signs as {self.enforcer.did()}, but the chain's active "
+                    f"signer is {active}; only the active key can hand over"
+                )
             if new_signer == active:
                 # An operator who believes they rotated and did not is worse
                 # off than one who gets an error: they now trust a key that
@@ -369,7 +426,12 @@ class Engine:
             amount_minor = require_amount(body.get("amount"), currency)
             require_amount_agreement(body, amount_minor)
             require_context(body.get("context"))
-            check_freshness(body.get("created_at") or iso(utcnow()))
+            # Required, not defaulted to now: an intent without a creation
+            # time was fresh forever, and only a nonce remembered forever
+            # stood between it and a replay. Nonces are pruned now.
+            if not body.get("created_at"):
+                raise ValidationError("created_at is required")
+            check_freshness(body["created_at"])
         except (ValidationError, KeyError) as exc:
             raise MandateError(f"invalid intent: {exc}") from exc
 
@@ -795,6 +857,14 @@ class Engine:
                     "started_at": started,
                     "request": request_meta,
                 }
+                # Everything signed after dispatch must fit what the signer
+                # can sign, or the outcome of a call that was made cannot be
+                # recorded. That is decided now, while refusing costs nothing.
+                cap = getattr(self.enforcer, "MAX_MESSAGE", None)
+                if cap is not None:
+                    size = len(canonical_json(_largest_outcome(claim)))
+                    if size > cap:
+                        return self._deny_unsendable(tx, tenant, receipt_id, body, size, cap)
                 signed_claim = sign_object(self.enforcer, claim)
                 if not tx.cas_state(
                     receipt_id, "AUTHORIZED", "EXECUTING", signed_claim,
@@ -841,7 +911,7 @@ class Engine:
                     "predecessor_id": receipt_id,
                     "started_at": started,
                     "request": request_meta,
-                    "error": result.error,
+                    "error": bounded_error(result.error),
                 }
                 signed = sign_object(self.enforcer, new_body)
                 dst = result.state
@@ -859,16 +929,16 @@ class Engine:
                         "the receipt is no longer EXECUTING",
                         receipt_id,
                     )
-                binding = tx.get_budget_binding(receipt_id)
-                if binding:
-                    gid, curr, day, bamt = (
-                        binding["grant_id"], binding["currency"], binding["day"], binding["amount_minor"],
-                    )
-                else:
-                    gid = row["grant_id"]
-                    curr = row["currency"] or "EUR"
-                    day = self._day()
-                    bamt = int(row["amount_minor"] or 0)
+                try:
+                    gid, curr, day, bamt = self._settlement(tx, row, body)
+                except MandateError as exc:
+                    # Unreachable while execute() refuses an unbound receipt
+                    # before dispatch; if it is ever reached, the call went out
+                    # and the receipt stays EXECUTING for the reconciler.
+                    raise ExecutionUnknown(
+                        "the call was dispatched but the reservation it settles is not recorded",
+                        receipt_id,
+                    ) from exc
                 if result.state == "EXECUTED":
                     tx.commit_budget(gid, curr, day, bamt)
                     tx.audit("execution.succeeded", {"execution_id": execution_id, "budget_day": day}, receipt_id)
@@ -891,6 +961,174 @@ class Engine:
                 receipt_id,
             ) from exc
 
+    def _deny_unsendable(
+        self, tx, tenant: str, receipt_id: str, body: dict, size: int, cap: int,
+    ) -> dict[str, Any]:
+        """AUTHORIZED -> DENIED before dispatch, releasing the reservation."""
+        denied = {k: v for k, v in body.items() if k != "proof"}
+        denied["outcome"] = "DENIED"
+        denied["decision"] = {
+            "allowed": False,
+            "requires_human": False,
+            "reasons": [
+                f"the receipt could reach {size} bytes after dispatch and the enforcer "
+                f"signer can sign at most {cap}; nothing was sent"
+            ],
+        }
+        signed = sign_object(self.enforcer, denied)
+        if not tx.cas_state(
+            receipt_id, "AUTHORIZED", "DENIED", signed,
+            chain=self._chain(tx, tenant, receipt_id, "DENIED", signed),
+        ):
+            raise MandateError("authorization already consumed")
+        row = tx.get_receipt(receipt_id)
+        gid, curr, day, amount = self._settlement(tx, row, body)
+        tx.release_budget(gid, curr, day, amount)
+        tx.audit("execution.refused", {"receipt_id": receipt_id, "size": size, "cap": cap}, receipt_id)
+        return signed
+
+    def _settlement(
+        self, tx, row, body: dict, budget_day: str | None = None,
+    ) -> tuple[str, str, str, int]:
+        """The reservation a receipt's outcome settles: grant, currency, day
+        and minor units.
+
+        The binding written when the reservation was made is authoritative.
+        Receipts from before bindings existed used to settle on *today* —
+        the one day the reservation was certainly not made on whenever the
+        settlement crosses midnight: a day that reserved nothing was debited
+        and the real reservation stayed held. Such a receipt now settles on
+        the day it records, or on the day an operator names; if neither
+        exists, nothing is settled and the caller is told why. A day that was
+        never written down cannot be recovered by guessing.
+        """
+        binding = tx.get_budget_binding(row["id"])
+        recorded = binding["day"] if binding else (row.get("budget_day") or body.get("budget_day"))
+        if budget_day is not None:
+            try:
+                canonical = datetime.strptime(budget_day, "%Y-%m-%d").strftime("%Y-%m-%d")
+            except (TypeError, ValueError) as exc:
+                raise MandateError("budget day must be YYYY-MM-DD") from exc
+            # strptime also accepts 2026-9-1; budget rows are keyed 2026-09-01,
+            # so the unpadded form would settle a day that reserved nothing.
+            if canonical != budget_day:
+                raise MandateError(f"budget day must be YYYY-MM-DD, as in {canonical}")
+            if recorded and budget_day != recorded:
+                raise MandateError(f"this receipt reserved on {recorded}, not {budget_day}")
+        day = recorded or budget_day
+        if not day:
+            raise MandateError(
+                "this receipt predates budget bindings and records no reservation day; "
+                "name the day it reserved"
+            )
+        if binding:
+            return binding["grant_id"], binding["currency"], day, binding["amount_minor"]
+        return row["grant_id"], row["currency"] or "EUR", day, int(row["amount_minor"] or 0)
+
+    def unknown_receipts(self, tenant: str | None = None) -> list[dict[str, Any]]:
+        """Receipts whose outcome nobody knows, for an operator to look into.
+
+        Each one names what was sent and where, so the question "did the
+        upstream act on it?" can be asked of the upstream, which is the only
+        place it can be answered.
+        """
+        try:
+            with self.ledger.tx() as tx:
+                rows = tx.receipts_in_state("EXECUTION_UNKNOWN", tenant)
+        except StorageError as exc:
+            raise MandateError("storage error") from exc
+        return [json.loads(r["body"]) | {"tenant": r["tenant"]} for r in rows]
+
+    def resolve_unknown(
+        self, receipt_id: str, outcome: str, *, operator: str, reason: str,
+        tenant: str = DEFAULT_TENANT, budget_day: str | None = None,
+    ) -> dict[str, Any]:
+        """Record a human's finding about an EXECUTION_UNKNOWN receipt.
+
+        The engine cannot know whether the upstream acted; a person who asked
+        the upstream can. Their answer settles the reservation — committed if
+        the call took effect, released if it did not — and becomes part of the
+        receipt, signed and chained like every other state, with who decided
+        and why. Until now the only way out of EXECUTION_UNKNOWN was to edit
+        the database, which is exactly what the chain exists to catch.
+
+        `budget_day` is needed only for a receipt from before budget bindings
+        that records no reservation day; see `_settlement`.
+        """
+        if outcome not in {"EXECUTED", "EXECUTION_FAILED"}:
+            raise MandateError("outcome must be EXECUTED or EXECUTION_FAILED")
+        operator, reason = (operator or "").strip(), (reason or "").strip()
+        if not operator or not reason:
+            raise MandateError("a resolution needs the operator's name and a reason")
+        if len(operator) > 200 or len(reason) > 2000:
+            raise MandateError("operator is limited to 200 characters and reason to 2000")
+        if any(not ch.isprintable() for ch in operator + reason.replace("\n", " ")):
+            raise MandateError("operator and reason must be printable text")
+        try:
+            with self.ledger.tx() as tx:
+                row = tx.get_receipt(receipt_id, tenant=tenant)
+                if row is None:
+                    raise MandateError("receipt not found")
+                if row["state"] != "EXECUTION_UNKNOWN":
+                    raise MandateError(f"receipt is {row['state']}, not EXECUTION_UNKNOWN")
+                body = json.loads(row["body"])
+                gid, curr, day, amount = self._settlement(tx, row, body, budget_day)
+                new_body = {k: v for k, v in body.items() if k != "proof"}
+                new_body["outcome"] = outcome
+                execution = dict(new_body.get("execution") or {})
+                execution["state"] = outcome
+                execution["resolution"] = {
+                    "from": "EXECUTION_UNKNOWN",
+                    "decided": outcome,
+                    "by": operator,
+                    "reason": reason,
+                    "at": iso(self._now()),
+                    "budget_day": day,
+                }
+                new_body["execution"] = execution
+                # The pre-dispatch check reserved room for a short finding
+                # (_RESOLUTION_RESERVE), not for the longest one accepted
+                # here. Measure before asking the signer, so an operator who
+                # wrote too much is told by how much instead of getting a
+                # key manager's refusal.
+                cap = getattr(self.enforcer, "MAX_MESSAGE", None)
+                if cap is not None:
+                    size = len(canonical_json(new_body))
+                    if size > cap:
+                        raise MandateError(
+                            f"this resolution would be {size} bytes and the enforcer signer "
+                            f"signs at most {cap}; shorten the reason or operator by "
+                            f"{size - cap} bytes. Nothing was changed."
+                        )
+                signed = sign_object(self.enforcer, new_body)
+                if not tx.cas_state(
+                    receipt_id, "EXECUTION_UNKNOWN", outcome, signed,
+                    chain=self._chain(tx, row["tenant"], receipt_id, outcome, signed),
+                ):
+                    raise MandateError("receipt changed state while it was being resolved")
+                if outcome == "EXECUTED":
+                    tx.commit_budget(gid, curr, day, amount)
+                else:
+                    tx.release_budget(gid, curr, day, amount)
+                prior = tx.get_execution_by_receipt(receipt_id)
+                if prior:
+                    tx.put_execution(
+                        prior["id"], receipt_id, prior["idempotency_key"], outcome, execution
+                    )
+                tx.audit(
+                    "execution.resolved",
+                    {"receipt_id": receipt_id, "outcome": outcome, "by": operator, "budget_day": day},
+                    receipt_id,
+                )
+                return signed
+        except StorageError as exc:
+            raise MandateError("storage error") from exc
+        except SigningError as exc:
+            # Operator-facing, so the signer's reason is useful here: a cap
+            # is met by a shorter reason, which the pre-dispatch check keeps
+            # room for.
+            raise MandateError(f"the resolution could not be signed: {exc}") from exc
+
     def _is_stale(self, started_at: str | None) -> bool:
         cutoff = self._now() - timedelta(seconds=self.execution_stale_after_s)
         if not started_at:
@@ -906,7 +1144,9 @@ class Engine:
         new_body = {k: v for k, v in body.items() if k != "proof"}
         new_body["outcome"] = "EXECUTION_UNKNOWN"
         execution = dict(new_body.get("execution") or {})
-        execution.update(state="EXECUTION_UNKNOWN", error=reason, reconciled_at=iso(self._now()))
+        execution.update(
+            state="EXECUTION_UNKNOWN", error=bounded_error(reason), reconciled_at=iso(self._now())
+        )
         new_body["execution"] = execution
         signed = sign_object(self.enforcer, new_body)
         # Reconciliation sweeps every tenant, so the tenant comes off the row

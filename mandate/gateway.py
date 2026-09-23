@@ -15,14 +15,17 @@ from .auth import (
     AuthContext,
     AuthError,
     Authenticator,
+    LedgerRateLimiter,
     RateLimited,
     RateLimiter,
 )
+from . import __version__
 from .engine import Engine, MandateError
 from .limits import BodyLimitMiddleware
 from .validate import ValidationError, reject_forbidden
 
-VERSION = "0.5.0"
+# Read from the package, not typed here: this said 0.5.0 through four releases.
+VERSION = __version__
 
 
 class IntentEnvelope(BaseModel):
@@ -47,19 +50,25 @@ def _unauthorized(exc: AuthError) -> HTTPException:
 def create_app(
     engine: Engine,
     auth: Authenticator | None = None,
-    rate_limiter: RateLimiter | None = None,
+    rate_limiter: RateLimiter | LedgerRateLimiter | None = None,
+    anchoring=None,
 ) -> FastAPI:
     """Build the gateway.
 
     `auth` is required. Running unauthenticated has to be chosen out loud by
     passing `OpenAccess()`, so no deployment gets there by omission.
+
+    `anchoring`, a `witness.AnchorSchedule`, posts every tenant's chain head
+    to an external witness while the gateway runs.
     """
     if auth is None:
         raise ValueError(
             "create_app requires an authenticator; pass auth=OpenAccess() "
             "to run unauthenticated for single-tenant development"
         )
-    limiter = rate_limiter if rate_limiter is not None else RateLimiter()
+    # The default limit is shared by every process serving this ledger. An
+    # in-memory one would be multiplied by the number of workers.
+    limiter = rate_limiter if rate_limiter is not None else LedgerRateLimiter(engine.ledger)
 
     def _context(request: Request, scope: str) -> AuthContext:
         try:
@@ -84,7 +93,16 @@ def create_app(
         # A process that died mid-execution leaves receipts in EXECUTING.
         # They are closed out as EXECUTION_UNKNOWN before serving traffic.
         instance.state.reconciled = engine.reconcile_stale_executions()
-        yield
+        task = None
+        if anchoring is not None:
+            import asyncio
+
+            task = asyncio.create_task(anchoring.loop(engine))
+        try:
+            yield
+        finally:
+            if task is not None:
+                task.cancel()
 
     app = FastAPI(title="Mandate Enforcement Gateway", version=VERSION, lifespan=lifespan)
     app.state.engine = engine

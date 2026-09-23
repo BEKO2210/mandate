@@ -186,10 +186,12 @@ def issue_api_key(
 
 
 class RateLimiter:
-    """Token bucket per key.
+    """Token bucket per key, held in this process's memory.
 
-    In-process, so it bounds one gateway process. That matches the rest of this
-    deployment model: the ledger is a single SQLite file on one node.
+    It bounds one process. Behind N workers the effective limit is N times the
+    configured one, which is why the gateway defaults to `LedgerRateLimiter`.
+    This one remains for embedding the engine where there is only one process
+    by construction.
     """
 
     def __init__(self, per_minute: int = 120, burst: int | None = None, clock=time.monotonic) -> None:
@@ -211,3 +213,35 @@ class RateLimiter:
                 self._buckets[key] = (tokens, now)
                 raise RateLimited(retry_after)
             self._buckets[key] = (tokens - 1.0, now)
+
+
+class LedgerRateLimiter:
+    """Token bucket per key, held in the ledger.
+
+    Every gateway process that serves one ledger shares one bucket per key,
+    so the limit is what was configured regardless of how many workers run.
+    Each check is one short `BEGIN IMMEDIATE` transaction, which serialises
+    it against the other processes the same way budget reservations are.
+
+    The clock is wall time because monotonic clocks are not comparable across
+    processes. A clock that steps backwards refills nothing (see
+    `take_rate_token`). If the ledger cannot be written the check raises, and
+    the request fails rather than passing unmetered.
+    """
+
+    def __init__(self, ledger, per_minute: int = 120, burst: int | None = None, clock=time.time) -> None:
+        if per_minute <= 0:
+            raise ValueError("per_minute must be positive")
+        if burst is not None and burst < 1:
+            raise ValueError("burst must be at least 1")
+        self.ledger = ledger
+        self.rate = per_minute / 60.0
+        self.capacity = float(burst if burst is not None else per_minute)
+        self.clock = clock
+
+    def check(self, key: str) -> None:
+        now = self.clock()
+        with self.ledger.tx() as tx:
+            wait = tx.take_rate_token(key, now, self.rate, self.capacity)
+        if wait > 0.0:
+            raise RateLimited(wait)

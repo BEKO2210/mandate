@@ -33,6 +33,12 @@ def count_gates() -> int:
     total = 0
     for path in sorted(TESTS.glob("test_*.py")):
         tree = ast.parse(path.read_text(encoding="utf-8"), str(path))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Attribute) and node.attr == "parametrize":
+                raise AssertionError(
+                    f"{path} parametrizes a test, so pytest's count and this one "
+                    "differ; the page would state a number the suite does not print"
+                )
         total += sum(
             1 for node in tree.body
             if isinstance(node, ast.FunctionDef) and node.name.startswith("test_")

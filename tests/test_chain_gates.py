@@ -1122,7 +1122,8 @@ def test_g199_a_hostile_anchor_file_cannot_silence_the_verifier(tmp_path):
         '{"tenant": "default", "seq": true, "entry_hash": "x"}',
     ]) + "\n\n\n", encoding="utf-8")
 
-    anchors = _read_anchors(str(path))
+    anchors, unusable = _read_anchors(str(path))
+    assert unusable == 10, "every line that is not an anchor is counted, for the exit code"
 
     # Exactly one record in that file is an anchor. The rest are missing a
     # field, have the wrong type in one, or carry a seq below 1, and the

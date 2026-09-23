@@ -12,7 +12,7 @@ Covered by G41–G44.
 
 `Route.network_policy` defaults to `"public"`. Loopback/RFC1918 require explicit server-side `"allow_private"`. Metadata hosts and link-local addresses stay blocked even under `allow_private`. Hostnames are resolved with `getaddrinfo`; any blocked address fails closed.
 
-HTTP connections pin the first allowed IP and send the original Host header. HTTPS keeps the hostname for SNI/certificate checks and therefore retains a DNS TOCTOU residual between check and connect.
+HTTP connections pin the first allowed IP and send the original Host header. Since v0.9.0 HTTPS does too: it connects to the validated IP and keeps the hostname for SNI and certificate verification, and proxy environment variables are ignored (G202–G206).
 
 Covered by G45–G52.
 
@@ -148,16 +148,102 @@ the baseline under concurrency.
 
 Covered by G158-G180.
 
+## SH-10 — The policy must hold at the socket, and the limit across workers — DONE in v0.9.0
+
+HTTPS connected by name, so the name was resolved a second time after the
+destination check. A resolver that answered differently the second time sent
+an authorized request to an internal address; TLS did not stop it, because
+whoever controls a name's DNS can hold a certificate for it. HTTPS now
+connects to the checked address and keeps the name for SNI and certificate
+verification. With `HTTPS_PROXY` set, every request went to the proxy, which
+resolved the name itself — proxy variables are now ignored. Certificate
+verification cannot be disabled; a private CA path is loaded at startup.
+
+The rate limit was a dict in one process's memory, so N workers gave a key N
+times its limit. The bucket is now a ledger row. Writing it exposed a latent
+hang: a transaction that failed to begin kept the ledger lock, so the next
+one on any thread waited forever — and `database is locked` is an ordinary
+answer once processes share the file.
+
+Covered by G202–G211.
+
+## SH-11 — A security boundary must be configurable without code — DONE in v0.9.0
+
+The HTTP gateway could only be assembled in Python. `mandate gateway check`
+and `mandate gateway serve` now run it from one JSON file: routes,
+operations, enforcer signer, authentication, rate limit and CA bundle. The
+file is read strictly, and so is the MCP guard's, which used to ignore
+unknown keys — a misspelt `max_daily_amount` was dropped and the grant issued
+with no daily limit. `principal_signer` keeps the grant-issuing key in a key
+manager.
+
+Reading the executor for this found a path bug: connecting to the pinned
+address rebuilt the URL from the operation's path alone, so a `base_url` of
+`https://api.example/v2` sent `/v2/orders` to `/orders`. The receipt named
+one path and the upstream was asked for another.
+
+Covered by G212–G219.
+
+## SH-12 — An unknown outcome must be resolvable without editing the ledger — DONE in v0.9.0
+
+`EXECUTION_UNKNOWN` was a dead end: its reservation stayed held forever, so
+every unknown outcome permanently shrank a grant's daily budget, and the only
+way for a person who knew what happened to say so was to edit the database.
+`resolve_unknown` (`mandate gateway resolve`, `mandate mcp resolve`) records
+the finding as a signed, chained transition to `EXECUTED` (commit) or
+`EXECUTION_FAILED` (release), naming who decided and why.
+
+Settlement for receipts from before budget bindings fell back to *today*.
+`execute()` refuses such receipts before dispatch, so there it was dead code;
+resolution is where they still arrive. The day is now the recorded one, or one
+the operator names — never a guess, and never overriding a recorded day.
+
+Covered by G220–G225.
+
+## SH-13 — Nothing may be sent whose outcome cannot be signed — DONE in v0.9.0
+
+With the enforcer key on AWS KMS (4096-byte cap), a receipt whose claim fit
+could produce a result that did not: the executor's error text was unbounded.
+Reproduced with a 1100-byte context and a verbose 502 — the request was sent,
+the outcome could not be signed, and the receipt stayed EXECUTING until the
+next restart. Error text is now bounded to 200 one-byte characters, and before
+dispatch the engine sizes the largest body it could ever sign for the
+execution; if that exceeds the signer's cap the receipt is DENIED and nothing
+is sent.
+
+Covered by G226–G228.
+
+## SH-14 — Heads must leave the operator's reach without a runbook — DONE in v0.9.0
+
+`mandate chain anchor` wrote heads to a file; whether that file was beyond the
+operator's reach was left to the operator. `--witness` posts them to an HTTPS
+endpoint run by someone else, and the gateway's `anchoring` block does it on a
+schedule, once per interval across all workers. Every failure is loud: a
+non-2xx, a redirect, an unreachable witness or a missing token exits non-zero
+or stops the gateway from starting.
+
+Covered by G229–G232.
+
+## SH-15 — Replay protection must not need infinite memory — DONE in v0.9.0
+
+Every consumed nonce was kept forever. Pruning is safe only once the intent
+carrying a nonce can no longer pass the freshness check — and an intent
+without `created_at` passed it forever, because a missing value was read as
+"now". `created_at` is now required, and a nonce is dropped once it is older
+than the freshness window plus clock skew plus a minute.
+
+`/v1/info` also reported version 0.5.0 through four releases; it reads the
+package version now, and the README, changelog and pyproject are pinned to it.
+
+Covered by G233–G236.
+
 ## Residual / next
 
-- HTTPS DNS TOCTOU (check then connect by name)
-- No connection-level IP pin for TLS
-- The rate limiter is in-process and bounds one gateway process
 - A chain cannot prove what was removed from its own end; truncation is only
-  detectable against a head kept outside the deployment. `mandate chain anchor`
-  now writes those heads and `--anchors` checks them, so this is a deployment
-  obligation rather than an open gap: an anchor stored on the same disk, under
-  the same operator, buys nothing
+  detectable against a head kept outside the deployment. The gateway now posts
+  heads to a witness on a schedule (`anchoring`) and `mandate chain anchor
+  --witness` does it on demand, so what remains is choosing a witness the
+  operator does not control — which no software can do for them
 - The chain is signed by the enforcer key; a compromise of that key allows
   history and chain to be re-signed together, from the moment it is taken
   until it is rotated away. `mandate chain rotate` bounds that window — the
@@ -168,12 +254,12 @@ Covered by G158-G180.
   is bounded by the proof check — a licensed row is still read, and a row
   nobody signed is still a finding
 - The request hash binds what the gateway sent, not what the upstream received
-- Routes and operations are configured in code, not from a file or admin API;
-  the HTTP gateway therefore takes its enforcer signer as a constructor
-  argument rather than from configuration
 - A key manager does not bound a live compromise of the signing process
-- AWS KMS caps a signed message at 4096 bytes, which a receipt with a large
-  context exceeds; the signer refuses rather than falling back to a digest,
-  because the digest variant would not verify as `did:key`
-- The principal key that issues grants is local by default
-- Reconciling an EXECUTION_UNKNOWN reservation is still a manual decision
+- AWS KMS caps a signed message at 4096 bytes. An execution whose receipt
+  could exceed it is refused before dispatch, so the cost is capacity — less
+  room for context — not a lost outcome
+- Without `principal_signer`, `mcp init` writes the grant-issuing key to the
+  store as a development file; that is a default an operator has to change
+- Resolving an EXECUTION_UNKNOWN receipt records an operator's finding; the
+  engine cannot check it against the upstream, and the receipt says so by
+  naming who decided

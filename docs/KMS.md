@@ -126,6 +126,29 @@ says what to do, rather than passing an AWS error code up. In practice:
   intent, so lower `MAX_CONTEXT_BYTES`, or use Vault transit, Cloud KMS or a
   command signer, none of which have a comparable limit.
 
+The dangerous case was the enforcer key. The claim signed before dispatch
+could fit while the result signed after it did not: the result adds the
+status, the response hash and the executor's error text, which was
+unbounded. The request went out, the outcome could not be signed, and the
+receipt sat in EXECUTING until a restart made it EXECUTION_UNKNOWN. Two
+changes close that:
+
+* Error text in a receipt is printable ASCII without characters JSON escapes,
+  at most 200 characters — one byte per character, whatever the upstream said.
+* Before dispatch, the engine signs nothing it cannot finish. It builds the
+  largest body it could ever sign for this execution — result, reconciler,
+  and a resolution of 32 + 128 ASCII characters on top — and if that exceeds
+  the enforcer signer's cap, the receipt goes AUTHORIZED → DENIED with the
+  sizes in its reason, the reservation is released, and nothing is sent.
+
+That leaves about 840 bytes of context (measured) for an
+enforcer on AWS KMS. Signers without a cap are unaffected.
+
+The reserve guarantees that a short finding always fits: 32 characters of
+operator and 128 of reason, plain ASCII. A longer one may still fit; if it
+does not, `resolve` measures it before the key manager is asked and says how
+many bytes to cut, and nothing is changed.
+
 ## Two invariants
 
 **Every remote signature is verified before it is returned.** An Ed25519 verify
@@ -181,10 +204,12 @@ grant     : grant_529ee2972e6c44de
 agent key : aws-kms — not written here
 ```
 
-The principal key is still local, because issuing a grant is an operator
-action, not something the guard does while serving. A deployment that matters
-issues the grant elsewhere entirely and gives the guard only access to the
-agent key — which, with a key manager, is an IAM policy rather than a file.
+The principal key — the one that issues the grant — takes a block of its own,
+`principal_signer`. Without it `mcp init` writes a development key to the
+store; with it the grant is signed in the key manager and no principal key
+exists on the host at all. Issuing a grant is an operator action, so the
+guard's serving identity needs no access to that key: give `mcp init` the
+permission, and the running guard only the agent key.
 
 ## The enforcer key
 
@@ -206,7 +231,5 @@ engine = Engine(
 Receipts verify exactly as before: the DID is the public key either way, so
 nothing downstream has to know where the key lived.
 
-For an MCP guard the same thing is one config block (`enforcer_signer`). The
-HTTP gateway has no configuration file yet — routes and keys are still set in
-code — so there it is a constructor argument. That gap is tracked in
-`docs/SECURITY_BACKLOG.md`.
+For an MCP guard and for the HTTP gateway the same thing is one config block,
+`enforcer_signer`; see `docs/GATEWAY.md` for the gateway's file.

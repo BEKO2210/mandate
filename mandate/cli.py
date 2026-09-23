@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from datetime import timedelta
 from pathlib import Path
 
 from .auth import issue_api_key, normalize_scopes
-from .crypto import utcnow, verify_object
+from .crypto import sign_object, utcnow, verify_object
 from .examples_runner import run_belkis_demo
 from .ledger import Ledger
 
@@ -16,6 +17,64 @@ DEFAULT_DB = Path(".mandate") / "mandate.sqlite"
 
 def _ledger(path: str | Path) -> Ledger:
     return Ledger(Path(path))
+
+
+def _add_resolution_commands(group) -> None:
+    unknown = group.add_parser(
+        "unknown", help="List receipts whose outcome nobody knows (EXECUTION_UNKNOWN)"
+    )
+    unknown.add_argument("--config", required=True)
+    unknown.add_argument("--tenant", default=None)
+    resolve = group.add_parser(
+        "resolve",
+        help="Record what the upstream says happened to an EXECUTION_UNKNOWN receipt",
+    )
+    resolve.add_argument("--config", required=True)
+    resolve.add_argument("--receipt", required=True)
+    resolve.add_argument("--tenant", default="default")
+    resolve.add_argument(
+        "--outcome", required=True, choices=["executed", "failed"],
+        help="executed: the upstream acted, the budget is spent. failed: it did not, "
+             "the reservation is released.",
+    )
+    resolve.add_argument("--by", required=True, help="Who checked the upstream")
+    resolve.add_argument("--reason", required=True, help="What they found, and where")
+    resolve.add_argument(
+        "--budget-day", default=None,
+        help="Only for a receipt from before budget bindings that records no "
+             "reservation day: the day (YYYY-MM-DD) it reserved",
+    )
+
+
+def _resolution(engine, args) -> int:
+    from .engine import MandateError
+
+    if args.resolve_cmd == "unknown":
+        rows = engine.unknown_receipts(args.tenant)
+        for rec in rows:
+            execution = rec.get("execution") or {}
+            request = execution.get("request") or {}
+            print(f"{rec['id']}  {rec['tenant']:<12} {rec.get('intent', {}).get('action', '?')}")
+            print(f"{'':22}{request.get('method', '?')} {request.get('destination', '?')}")
+            print(f"{'':22}idempotency {execution.get('idempotency_key', '?')}, "
+                  f"request {request.get('hash', '?')}, started {execution.get('started_at', '?')}")
+            print(f"{'':22}{execution.get('error') or ''}")
+        if not rows:
+            print("no receipts in EXECUTION_UNKNOWN")
+        return 0
+
+    outcome = "EXECUTED" if args.outcome == "executed" else "EXECUTION_FAILED"
+    try:
+        rec = engine.resolve_unknown(
+            args.receipt, outcome, operator=args.by, reason=args.reason, tenant=args.tenant,
+            budget_day=args.budget_day,
+        )
+    except MandateError as exc:
+        print(f"not resolved: {exc}", file=sys.stderr)
+        return 1
+    settled = "committed" if outcome == "EXECUTED" else "released"
+    print(f"{rec['id']}: EXECUTION_UNKNOWN -> {outcome}, reservation {settled}")
+    return 0
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -53,6 +112,7 @@ def main(argv: list[str] | None = None) -> int:
     mcp_init.add_argument("--config", required=True)
     mcp_serve = mcp_sub.add_parser("serve", help="Serve the guard on stdio")
     mcp_serve.add_argument("--config", required=True)
+    _add_resolution_commands(mcp_sub)
 
     ch = sub.add_parser("chain", help="Inspect the receipt chain")
     ch_sub = ch.add_subparsers(dest="chain_cmd", required=True)
@@ -84,8 +144,16 @@ def main(argv: list[str] | None = None) -> int:
     ch_anchor.add_argument("--db", default=str(DEFAULT_DB))
     ch_anchor.add_argument("--tenant", default=None, help="Default: every tenant")
     ch_anchor.add_argument(
-        "--file", required=True,
+        "--file", default=None,
         help="Where to append. Put it somewhere the database operator cannot reach.",
+    )
+    ch_anchor.add_argument(
+        "--witness", default=None,
+        help="POST the heads to this URL, run by someone other than the operator",
+    )
+    ch_anchor.add_argument(
+        "--witness-token-env", default=None,
+        help="Environment variable holding a bearer token for the witness",
     )
 
     ch_rotate = ch_sub.add_parser(
@@ -95,6 +163,22 @@ def main(argv: list[str] | None = None) -> int:
     ch_rotate.add_argument("--tenant", default="default")
     ch_rotate.add_argument("--config", required=True, help="An MCP guard configuration file")
     ch_rotate.add_argument("--to", required=True, help="The did:key taking over")
+
+    gw = sub.add_parser("gateway", help="Run the HTTP enforcement gateway from a configuration file")
+    gw_sub = gw.add_subparsers(dest="gateway_cmd", required=True)
+    gw_check = gw_sub.add_parser(
+        "check", help="Validate the configuration and prove the enforcer can sign"
+    )
+    gw_check.add_argument("--config", required=True)
+    _add_resolution_commands(gw_sub)
+    gw_serve = gw_sub.add_parser("serve", help="Serve the gateway")
+    gw_serve.add_argument("--config", required=True)
+    gw_serve.add_argument("--host", default="127.0.0.1")
+    gw_serve.add_argument("--port", type=int, default=8080)
+    gw_serve.add_argument(
+        "--workers", type=int, default=1,
+        help="Worker processes. They share one ledger, and so one rate limit per key.",
+    )
 
     signer = sub.add_parser("signer", help="Inspect the keys Mandate signs with")
     signer_sub = signer.add_subparsers(dest="signer_cmd", required=True)
@@ -123,6 +207,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.cmd == "signer":
         return _signer(args)
+
+    if args.cmd == "gateway":
+        return _gateway(args)
 
     if args.cmd == "chain":
         return _chain(args)
@@ -154,8 +241,19 @@ def _mcp(args) -> int:
             print(f"agent key : {config.agent_signer.get('kind')} — not written here")
         else:
             print(f"agent key : {config.store_path / 'keys' / 'agent.key'} (development key)")
+        if config.principal_signer:
+            print(f"principal key: {config.principal_signer.get('kind')} — not written here")
+        else:
+            print(f"principal key: {config.store_path / 'keys' / 'principal.key'} (development key)")
         print(f"keys in   : {config.store_path / 'keys'} (keep them private)")
         return 0
+
+    if args.mcp_cmd in {"unknown", "resolve"}:
+        from .mcp.server import build_engine
+
+        engine, _ = build_engine(config, _refuse_call, sorted(config.mapping.rules))
+        args.resolve_cmd = args.mcp_cmd
+        return _resolution(engine, args)
 
     if args.mcp_cmd == "serve":
         import anyio
@@ -194,18 +292,21 @@ def _anchor_problem(record: dict) -> str | None:
     return None
 
 
-def _read_anchors(path: str | None) -> list[dict]:
-    """Heads written down earlier, one JSON object per line.
+def _read_anchors(path: str | None) -> tuple[list[dict], int]:
+    """Heads written down earlier, one JSON object per line; and how many
+    lines were not anchors.
 
     A line that cannot be read is reported and skipped rather than fatal: the
     file lives outside this system's control by design, so a verifier that
     dies on one bad line is a verifier an operator can silence with one bad
-    line. A line that is readable but is not an anchor is reported here, with
-    its number, rather than downstream where the context is gone.
+    line. But skipped is not the same as fine. If the only anchor for a tenant
+    was damaged, what remains checks nothing and a truncated chain would pass;
+    so the count comes back, and `chain verify` fails on any unusable line.
     """
     if not path:
-        return []
+        return [], 0
     out: list[dict] = []
+    bad = 0
     for number, line in enumerate(Path(path).read_text(encoding="utf-8").splitlines(), 1):
         line = line.strip()
         if not line:
@@ -214,16 +315,19 @@ def _read_anchors(path: str | None) -> list[dict]:
             record = json.loads(line)
         except ValueError as exc:
             print(f"  ! anchor file line {number} is unreadable: {exc}")
+            bad += 1
             continue
         if not isinstance(record, dict):
             print(f"  ! anchor file line {number} is not an object")
+            bad += 1
             continue
         problem = _anchor_problem(record)
         if problem:
             print(f"  ! anchor file line {number} {problem}; it is not an anchor")
+            bad += 1
             continue
         out.append(record)
-    return out
+    return out, bad
 
 
 def _chain(args) -> int:
@@ -245,21 +349,40 @@ def _chain(args) -> int:
             return 0
 
         if args.chain_cmd == "anchor":
+            from .witness import WitnessError, post_anchors, token_from_env
+
+            if not args.file and not args.witness:
+                print("anchor needs --file, --witness or both", file=sys.stderr)
+                return 2
             with engine.ledger.tx() as tx:
                 tenants = [args.tenant] if args.tenant else (tx.chain_tenants() or [])
-            written = 0
-            with open(args.file, "a", encoding="utf-8") as fh:
-                for tenant in tenants:
-                    anchor = engine.anchor_chain(tenant)
-                    if not anchor:
-                        print(f"{tenant}: the chain is empty, nothing to anchor")
-                        continue
-                    fh.write(json.dumps(anchor, sort_keys=True) + "\n")
-                    print(f"{tenant}: seq {anchor['seq']} {anchor['entry_hash']}")
-                    written += 1
-            if written:
+            anchors = []
+            for tenant in tenants:
+                anchor = engine.anchor_chain(tenant)
+                if not anchor:
+                    print(f"{tenant}: the chain is empty, nothing to anchor")
+                    continue
+                print(f"{tenant}: seq {anchor['seq']} {anchor['entry_hash']}")
+                anchors.append(anchor)
+            if not anchors:
+                return 0
+            if args.witness:
+                # Before the file: a witness that refuses is the failure worth
+                # stopping for, and the file can be written on the retry.
+                try:
+                    digest = post_anchors(
+                        args.witness, anchors, token=token_from_env(args.witness_token_env)
+                    )
+                except WitnessError as exc:
+                    print(f"witness FAILED: {exc}", file=sys.stderr)
+                    return 1
+                print(f"Witnessed by {args.witness} (reply sha256 {digest}).")
+            if args.file:
+                with open(args.file, "a", encoding="utf-8") as fh:
+                    for anchor in anchors:
+                        fh.write(json.dumps(anchor, sort_keys=True) + "\n")
                 print(
-                    f"Appended {written} anchor(s) to {args.file}. It is worth "
+                    f"Appended {len(anchors)} anchor(s) to {args.file}. It is worth "
                     f"something only where this database's operator cannot edit it."
                 )
             return 0
@@ -283,7 +406,7 @@ def _chain(args) -> int:
             return 0
 
         if args.chain_cmd == "verify":
-            anchors = _read_anchors(args.anchors)
+            anchors, unusable = _read_anchors(args.anchors)
             with engine.ledger.tx() as tx:
                 tenants = [args.tenant] if args.tenant else (tx.chain_tenants() or ["default"])
             failed = False
@@ -298,6 +421,13 @@ def _chain(args) -> int:
                 for note in report.notes:
                     print(f"  - {note}")
                 failed = failed or not report.ok
+            if unusable:
+                print(
+                    f"FAILED: {unusable} line(s) of {args.anchors} are not anchors. The "
+                    "chain was checked against the rest, but a damaged anchor file "
+                    "cannot vouch for the chain's end."
+                )
+                failed = True
             if not args.expect_head and not anchors:
                 print(
                     "Note: with neither --expect-head nor --anchors, entries deleted "
@@ -307,6 +437,95 @@ def _chain(args) -> int:
             return 1 if failed else 0
     finally:
         engine.ledger.close()
+    return 2
+
+
+def _gateway(args) -> int:
+    from .gateway_config import GatewayConfigError, load_gateway_config
+    from .signing import SigningError
+
+    try:
+        config = load_gateway_config(args.config)
+    except (GatewayConfigError, OSError) as exc:
+        print(f"configuration: INVALID — {exc}", file=sys.stderr)
+        return 1
+
+    if args.gateway_cmd in {"unknown", "resolve"}:
+        from .gateway_config import build_engine
+
+        args.resolve_cmd = args.gateway_cmd
+        return _resolution(build_engine(config), args)
+
+    if args.gateway_cmd == "check":
+        failed = False
+        print(f"store     : {config.store}")
+        for route in config.routes:
+            ops = ", ".join(op.action for op in route.operations) or "no operations"
+            print(f"route     : {route.tenant}/{route.audience} -> {route.base_url} "
+                  f"[{route.network_policy}] ({ops})")
+        if config.auth == "open":
+            print(f"auth      : OPEN — no authentication, every caller is tenant {config.open_tenant}")
+        else:
+            print("auth      : api keys (mandate keys new --db "
+                  f"{config.ledger_path} --tenant … --name …)")
+        print(f"rate limit: {config.per_minute}/min per key, burst "
+              f"{config.burst or config.per_minute}, shared by all workers")
+        print(f"upstream  : TLS verified against {config.ca_bundle or 'the system trust store'}")
+        if config.anchoring is None:
+            print("anchoring : OFF — truncation of the chain's end is detectable only "
+                  "against heads kept elsewhere")
+        else:
+            print(f"anchoring : every {config.anchoring.every_s:g}s to {config.anchoring.url}")
+            if config.anchoring.token_env and not os.environ.get(config.anchoring.token_env):
+                print(f"{'':10}  UNUSABLE — ${config.anchoring.token_env} is not set")
+                failed = True
+        if config.ca_bundle and not Path(config.ca_bundle).is_file():
+            print(f"{'':10}  UNUSABLE — {config.ca_bundle} does not exist")
+            failed = True
+        try:
+            signer = config.build_enforcer_signer()
+            if signer is None:
+                dev_key = config.store / "enforcer-keys" / "enforcer.key"
+                if not dev_key.exists():
+                    print(f"enforcer  : local development key, generated at first start in "
+                          f"{dev_key.parent}")
+                else:
+                    # The key `serve` would load. A damaged one used to pass
+                    # this check and then stop the gateway from starting.
+                    from .signing import FileSigner
+
+                    dev = FileSigner(dev_key)
+                    if not verify_object(sign_object(dev, {"probe": "gateway check"}),
+                                         expected_did=dev.did()):
+                        raise SigningError(f"{dev_key} signs, but not as {dev.did()}")
+                    print("enforcer  : local development key ok, held by this process")
+                    print(f"{'':10}  {dev.did()}")
+            else:
+                report = signer.check()
+                held = "held by this process" if report["signer"] == "file" else "held elsewhere"
+                print(f"enforcer  : {report['signer']} ok, {held}")
+                print(f"{'':10}  {report['did']}")
+        except SigningError as exc:
+            print(f"enforcer  : UNUSABLE — {exc}")
+            failed = True
+        return 1 if failed else 0
+
+    if args.gateway_cmd == "serve":
+        import uvicorn
+
+        from .gateway_config import ENV_VAR
+
+        if args.workers < 1:
+            print("--workers must be at least 1", file=sys.stderr)
+            return 2
+        # Every worker builds its app from the same file, so a factory rather
+        # than an app object: an object cannot be handed to other processes.
+        os.environ[ENV_VAR] = str(Path(args.config).resolve())
+        uvicorn.run(
+            "mandate.gateway_config:app_from_env", factory=True,
+            host=args.host, port=args.port, workers=args.workers,
+        )
+        return 0
     return 2
 
 
@@ -328,6 +547,7 @@ def _signer(args) -> int:
     for label, build in (
         ("agent", lambda: load_agent_signer(config)),
         ("enforcer", config.build_enforcer_signer),
+        ("principal", config.build_principal_signer),
     ):
         try:
             signer = build()
@@ -347,9 +567,10 @@ def _signer(args) -> int:
         held = "held by this process" if report["signer"] == "file" else "held elsewhere"
         print(f"{label:<9}: {report['signer']} ok, {held}")
         print(f"{'':9}  {report['did']}")
-        expected = state.get("agent_did") if label == "agent" else None
+        expected = state.get(f"{label}_did") if label in {"agent", "principal"} else None
         if expected and expected != report["did"]:
-            print(f"{'':9}  MISMATCH — the grant was issued to {expected}")
+            role = "issued to" if label == "agent" else "issued by"
+            print(f"{'':9}  MISMATCH — the grant was {role} {expected}")
             failed = True
 
     return 1 if failed else 0

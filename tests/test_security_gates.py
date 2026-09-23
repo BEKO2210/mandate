@@ -8,7 +8,7 @@ from uuid import uuid4
 import pytest
 from fastapi.testclient import TestClient
 
-from mandate.crypto import iso, sign_object, utcnow, verify_object
+from mandate.crypto import iso, sign_object, utcnow
 from mandate.engine import Engine, MandateError
 from mandate.executor import UpstreamExecutor
 from mandate.auth import OpenAccess
@@ -213,9 +213,7 @@ def test_g11_approval_replay_zero(tmp_path):
     try:
         engine, dummy, person, pkp, agent, akp, grant = _setup(tmp_path, dummy, human=50)
         rec = engine.submit_intent(_intent(akp, grant["id"], action="purchase.office", amount=80))
-        from mandate.engine import Engine as E
         intent = rec["intent"]
-        from mandate.models import new_id
         from mandate.crypto import iso
         approval = sign_object(
             pkp,
@@ -366,7 +364,6 @@ def test_g19_tampered_receipt_rejected(env):
         body = json.loads(row["body"])
         body["outcome"] = "EXECUTED"
         tx.cas_state(rec["id"], "AUTHORIZED", "DENIED", body) if False else None
-        import sqlite3
     with engine.ledger.tx() as tx:
         body = json.loads(tx.get_receipt(rec["id"])["body"])
         body["outcome"] = "EXECUTED"
@@ -484,7 +481,6 @@ def test_g30_restart_other_enforcer_rejects(env):
     engine, dummy, person, pkp, agent, akp, grant = env
     rec = engine.submit_intent(_intent(akp, grant["id"], action="purchase.office", amount=10))
     from mandate.crypto import KeyPair
-    from mandate.keys import InMemoryKeyProvider
 
     engine.keys = InMemoryKeyProvider(KeyPair.generate())
     engine.enforcer = engine.keys.get_enforcer()

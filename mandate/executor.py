@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import hashlib
 import ipaddress
+import os
 import socket
+import ssl
 from urllib.parse import urlparse
 
 import httpx
@@ -148,6 +150,32 @@ def assert_safe_destination(url: str, route: Route) -> list[str]:
 
 
 class UpstreamExecutor:
+    """Send an authorized request to the address the destination policy approved.
+
+    `verify` is httpx's: True (the system trust store), or a path to a CA
+    bundle for an upstream behind a private CA. It is never allowed to be
+    False — a destination check that ends at an unauthenticated peer checks
+    nothing.
+    """
+
+    def __init__(self, verify: bool | str = True) -> None:
+        if verify is False:
+            raise ValueError("certificate verification cannot be disabled")
+        # httpx deprecates a CA *path*; build the context here so the policy —
+        # hostname checking on, the platform's strictness kept — is ours.
+        self._verify: bool | ssl.SSLContext = (
+            ssl.create_default_context(cafile=verify) if isinstance(verify, str) else verify
+        )
+        if verify is True:
+            # trust_env=False below turns off proxies, and with them httpx's
+            # reading of SSL_CERT_FILE / SSL_CERT_DIR. A deployment trusting a
+            # private CA that way would silently lose it, so honour the two
+            # CA variables here, where they can only add trust anchors.
+            cafile = os.environ.get("SSL_CERT_FILE") or None
+            capath = os.environ.get("SSL_CERT_DIR") or None
+            if cafile or capath:
+                self._verify = ssl.create_default_context(cafile=cafile, capath=capath)
+
     def forward(
         self, route: Route, method: str, path: str, body: bytes, idempotency_key: str
     ) -> ExecutionResult:
@@ -174,24 +202,54 @@ class UpstreamExecutor:
             # Same form as execution.request.hash in the receipt.
             "X-Mandate-Request-Hash": "sha256:" + hashlib.sha256(body).hexdigest(),
         }
-        if parsed.scheme == "http" and pinned:
+        # Connect to the address the policy approved, for both schemes.
+        #
+        # HTTPS used to connect by *name*, so httpx resolved it a second time
+        # and a resolver that changed its answer between check and connect
+        # sent an authorized request somewhere the check never saw. TLS did
+        # not save it: whoever controls a domain's DNS can also hold a valid
+        # certificate for it. Reproduced before fixing — two resolutions, the
+        # approved server got nothing, an internal one got the request and
+        # answered 200. Now the socket goes to the pinned IP and the name is
+        # used only where it belongs: SNI, certificate verification, Host.
+        extensions: dict = {}
+        if pinned:
             host = parsed.hostname or ""
-            port = parsed.port or 80
+            default = 443 if parsed.scheme == "https" else 80
+            port = parsed.port or default
             ip = pinned[0]
-            if ":" in ip and not ip.startswith("["):
-                ip_lit = f"[{ip}]"
-            else:
-                ip_lit = ip
-            connect_url = f"http://{ip_lit}:{port}{path}"
-            headers["Host"] = host if not parsed.port else f"{host}:{parsed.port}"
+            ip_lit = f"[{ip}]" if ":" in ip and not ip.startswith("[") else ip
+            # The whole path of the checked URL, not just the operation's: a
+            # base_url of https://api.example/v2 used to lose its /v2 here,
+            # so the request went to a path the receipt never named.
+            target = parsed.path + (f"?{parsed.query}" if parsed.query else "")
+            connect_url = f"{parsed.scheme}://{ip_lit}:{port}{target}"
+            # An IPv6 literal needs its brackets back in an authority; SNI and
+            # certificate matching take the bare address.
+            authority = f"[{host}]" if ":" in host else host
+            headers["Host"] = authority if not parsed.port else f"{authority}:{parsed.port}"
+            if parsed.scheme == "https":
+                extensions["sni_hostname"] = host
 
         try:
-            with httpx.Client(timeout=route.timeout, follow_redirects=False) as client:
+            # trust_env=False: never route through a proxy named in the
+            # environment. With HTTPS_PROXY set — ordinary in a corporate
+            # network — every request went to the proxy as `CONNECT host:443`
+            # and the proxy resolved the name itself, so the destination
+            # policy checked one address and the proxy connected to another.
+            # Reproduced: the proxy was handed the hostname, never the pinned
+            # IP. A gateway that must egress through a proxy cannot enforce a
+            # destination policy it does not resolve, so it is not supported.
+            with httpx.Client(
+                timeout=route.timeout, follow_redirects=False,
+                trust_env=False, verify=self._verify,
+            ) as client:
                 resp = client.request(
                     method,
                     connect_url,
                     content=body,
                     headers=headers,
+                    extensions=extensions,
                 )
         except httpx.TimeoutException:
             return ExecutionResult("EXECUTION_UNKNOWN", None, int((time.monotonic() - t0) * 1000), None, "timeout")
