@@ -1,4 +1,4 @@
-"""Release gates G235-G236 and G253.
+"""Release gates G235-G236 and G253-G254.
 
 The gateway's `/v1/info` reported version 0.5.0 through four releases,
 because the number was typed into the module once. The same drift the
@@ -101,3 +101,13 @@ def test_g253_no_install_line_resolves_mandate_from_pypi():
                 bad.append(f"{path}: {line.strip()}")
     assert not bad, "install lines that would fetch `mandate` from PyPI:\n" + "\n".join(bad)
     assert found, "the documentation must say how to install"
+
+
+def test_g254_the_release_workflow_holds_no_token():
+    """A token in the repository or its secrets is a credential that outlives
+    the release it was made for. Publishing, when it comes, uses Trusted
+    Publishing; until then the workflow uploads nothing."""
+    workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
+    for leak in ("password:", "PYPI_TOKEN", "PYPI_API_TOKEN", "${{ secrets."):
+        assert leak not in workflow, leak
+    assert "twine check --strict" in workflow and "/tmp/clean/bin/mandate demo" in workflow

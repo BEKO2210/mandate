@@ -217,10 +217,20 @@ def main(argv: list[str] | None = None) -> int:
     return 2
 
 
+#: The one install line for the MCP extra, until the project owns a PyPI name.
+INSTALL_MCP = 'pip install "mandate[mcp] @ git+https://github.com/BEKO2210/mandate"'
+
+
 def _mcp(args) -> int:
     from .mcp.config import load_config, read_state
+    from .mcp.mapping import MappingError
 
-    config = load_config(args.config)
+    try:
+        config = load_config(args.config)
+    except (MappingError, OSError, ValueError) as exc:
+        # The same one-line answer `mandate gateway` gives, not a traceback.
+        print(f"configuration: INVALID — {exc}", file=sys.stderr)
+        return 1
 
     if args.mcp_cmd == "init":
         from .mcp.server import bootstrap, build_engine
@@ -256,9 +266,14 @@ def _mcp(args) -> int:
         return _resolution(engine, args)
 
     if args.mcp_cmd == "serve":
-        import anyio
+        try:
+            import anyio
 
-        from .mcp.server import serve
+            from .mcp.server import serve
+            import mcp  # noqa: F401  - the SDK is imported lazily inside serve()
+        except ImportError:
+            print(f"the MCP guard needs the mcp extra: {INSTALL_MCP}", file=sys.stderr)
+            return 1
 
         anyio.run(serve, config)
         return 0

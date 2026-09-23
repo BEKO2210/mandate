@@ -1,12 +1,33 @@
 [project]
+# Not on PyPI: the name `mandate` there belongs to an unrelated project, and
+# this one's name is still being decided. Install from the repository.
 name = "mandate"
 version = "0.9.0"
-description = "Enforcement gateway for AI-agent grants and execution"
+description = "Enforcement gateway for AI-agent grants and execution: signed, scoped, budget-aware authorization in front of MCP tools and HTTP APIs"
 readme = "README.md"
 requires-python = ">=3.11"
-license = { text = "Apache-2.0" }
+license = "Apache-2.0"
+license-files = ["LICENSE"]
 authors = [{ name = "Belkis Aslani" }, { name = "Mandate Labs" }]
 dependencies = ["cryptography>=41", "fastapi>=0.110", "httpx>=0.27", "uvicorn>=0.27"]
+keywords = ["mcp", "ai-agents", "authorization", "claude-code", "cursor", "audit", "gateway", "llm-security"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Security",
+    "Topic :: Software Development :: Libraries",
+]
+
+[project.urls]
+Homepage = "https://beko2210.github.io/mandate/"
+Source = "https://github.com/BEKO2210/mandate"
+Changelog = "https://github.com/BEKO2210/mandate/blob/main/CHANGELOG.md"
+Issues = "https://github.com/BEKO2210/mandate/issues"
 
 [project.optional-dependencies]
 mcp = ["mcp>=2.0", "anyio>=4"]
@@ -15,7 +36,7 @@ mcp = ["mcp>=2.0", "anyio>=4"]
 mandate = "mandate.cli:main"
 
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
