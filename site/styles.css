@@ -117,7 +117,8 @@ code { overflow-wrap: anywhere; }
 }
 .nav-row { display: flex; align-items: center; gap: 18px; min-height: 66px; }
 .brand { display: flex; align-items: center; gap: 12px; font-weight: 700; letter-spacing: -0.02em; }
-.mark { color: var(--fire); }
+.mark { color: var(--fire); flex-shrink: 0; transition: transform 0.25s; }
+.brand:hover .mark { transform: rotate(-6deg) scale(1.06); }
 .ver {
   font: 500 0.68rem/1 var(--mono);
   color: var(--fire);
@@ -185,15 +186,54 @@ code { overflow-wrap: anywhere; }
   pointer-events: none;
 }
 .flow-svg { display: block; width: 100%; height: auto; }
-.stageboard g rect { transition: fill 0.3s, stroke 0.3s; }
-.stageboard g.is-on rect { fill: #0a2b3a; stroke: var(--fire); }
+.stageboard g[data-stage] { transition: opacity 0.35s; }
+.stageboard g rect { transition: fill 0.3s, stroke 0.3s, filter 0.3s; }
+.stageboard g.is-on rect { fill: #0a2b3a; stroke: var(--fire); filter: drop-shadow(0 0 10px rgba(255, 65, 3, 0.45)); }
+/* The gate is the one node that is always armed. */
+.stageboard g.gate rect { filter: drop-shadow(0 0 6px rgba(255, 65, 3, 0.25)); }
+.stageboard g.gate.is-deny rect { fill: #2a0c03; stroke: var(--fire); filter: drop-shadow(0 0 16px rgba(255, 65, 3, 0.8)); }
+/* Not reached: the upstream a denied request never touches. */
+.stageboard g.is-dim { opacity: 0.3; }
 .wire { opacity: 0.4; }
 .wire-optional { stroke-dasharray: 5 6; opacity: 0.28; }
-.packet { filter: drop-shadow(0 0 7px rgba(255, 65, 3, 0.9)); }
-html.reduced .packet { display: none; }
+/* The path actually taken lights up behind the packet, then fades. */
+.trail {
+  fill: none; stroke: var(--fire); stroke-width: 2.5;
+  stroke-linejoin: round; stroke-linecap: round;
+  filter: drop-shadow(0 0 4px rgba(255, 65, 3, 0.85));
+  transition: opacity 0.6s;
+}
+.trail.fade { opacity: 0; }
+.packet { transition: opacity 0.2s; }
+.packet-core { filter: drop-shadow(0 0 6px rgba(255, 65, 3, 1)); }
+/* On a denial the wire to the upstream is visibly cut. */
+.cut { fill: none; stroke: var(--fire); stroke-width: 3; stroke-linecap: round; opacity: 0; transition: opacity 0.2s; filter: drop-shadow(0 0 6px rgba(255, 65, 3, 0.9)); }
+.cut.on { opacity: 1; }
+/* One ring per arrival: something was checked here. */
+.ping { fill: none; stroke: var(--fire); stroke-width: 1.5; opacity: 0; transform-box: fill-box; transform-origin: center; }
+.ping.go { animation: ping 0.75s ease-out; }
+@keyframes ping { from { opacity: 0.9; transform: scale(0.5); } to { opacity: 0; transform: scale(2.3); } }
+.stamp { opacity: 0; transform-box: fill-box; transform-origin: center; transform: rotate(-6deg) scale(1.6); transition: opacity 0.18s, transform 0.28s cubic-bezier(0.2, 1.6, 0.4, 1); }
+.stamp rect { fill: #2a0c03; stroke: var(--fire); stroke-width: 2; }
+.stamp text { fill: var(--fire); }
+.stamp.on { opacity: 1; transform: rotate(-6deg) scale(1); }
+/* The receipt chain along the bottom of the board. */
+.chain-cap { font: 500 9px var(--mono); letter-spacing: 0.18em; fill: var(--muted); opacity: 0.8; }
+.chain-link, .block-link { fill: none; stroke: #20414f; stroke-width: 1.5; }
+.chain .block { opacity: 0; transition: transform 0.5s cubic-bezier(0.3, 0.7, 0.2, 1), opacity 0.45s; }
+.chain .block.in { opacity: 1; }
+.chain .block rect { fill: #001019; stroke: #20414f; transition: stroke 0.6s, fill 0.6s; }
+.chain .block text { font: 500 9px var(--mono); fill: #7d98a6; }
+.chain .block.deny rect { stroke: var(--fire); stroke-dasharray: 3 3; }
+.chain .block.deny text { fill: var(--fire); }
+.chain .block.fresh rect { stroke: var(--fire); fill: #0a2b3a; }
+.chain .block.fresh text { fill: var(--paper); }
+html.reduced .packet, html.reduced .trail, html.reduced .ping, html.reduced .stamp, html.reduced .cut { display: none; }
 html.reduced .stageboard::before { display: none; }
 html.reduced .wire { stroke-dasharray: none; }
-.stage-label { margin-top: 14px; font: 500 0.78rem/1.4 var(--mono); color: var(--fire); }
+/* Two lines reserved: the label changes length every stage, and the page
+   below must not jump with it. */
+.stage-label { margin-top: 14px; min-height: 2.8em; font: 500 0.78rem/1.4 var(--mono); color: var(--fire); }
 
 /* --- the combo badge, between the two blocks ----------------------------- */
 .combo {

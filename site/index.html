@@ -16,8 +16,9 @@
   <header class="nav">
     <div class="wrap nav-row">
       <a class="brand" href="#top">
-        <svg class="mark" viewBox="0 0 32 32" width="22" height="22" aria-hidden="true">
-          <path d="M9 8v16M23 8v16M13 13h6v6h-6z" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="square"/>
+        <svg class="mark" viewBox="0 0 32 32" width="30" height="30" aria-hidden="true">
+          <rect width="32" height="32" rx="8" fill="currentColor"/>
+          <path d="M8 24V15.5l5.5 5.5L24 8.5V24" fill="none" stroke="#001621" stroke-width="3.2" stroke-linejoin="miter" stroke-miterlimit="8" stroke-linecap="square"/>
         </svg>
         <span>Mandate</span><span class="ver">v0.9.0</span>
       </a>
@@ -56,19 +57,30 @@
         <aside class="stageboard" aria-labelledby="flow-title">
           <svg class="flow-svg" viewBox="0 0 560 420" role="img" aria-labelledby="flow-title flow-desc">
             <title id="flow-title">Mandate authorization flow</title>
-            <desc id="flow-desc">Principal grants authority to an agent. Mandate evaluates the intent. Human approval may be requested. Only an authorized request reaches the registered upstream. The result becomes a signed receipt.</desc>
-            <defs><linearGradient id="wire" x1="0" x2="1"><stop stop-color="#ff4103"/><stop offset="1" stop-color="#eef4f7"/></linearGradient></defs>
+            <desc id="flow-desc">Principal grants authority to an agent. Mandate evaluates the intent. Human approval may be requested. Only an authorized request reaches the registered upstream. When a check fails the request is denied and nothing is sent. Every outcome, a denial included, becomes a signed receipt.</desc>
+            <defs>
+              <linearGradient id="wire" x1="0" x2="1"><stop stop-color="#ff4103"/><stop offset="1" stop-color="#eef4f7"/></linearGradient>
+              <radialGradient id="halo"><stop stop-color="#ff4103" stop-opacity="0.55"/><stop offset="1" stop-color="#ff4103" stop-opacity="0"/></radialGradient>
+            </defs>
             <path class="wire wire-main" d="M90 70 H280 V214 H470" fill="none" stroke="url(#wire)" stroke-width="1.5"/>
-            <path class="wire wire-optional" d="M280 214 V340" fill="none" stroke="url(#wire)" stroke-width="1.5"/>
-            <path class="wire wire-optional" d="M280 340 H470 V214" fill="none" stroke="url(#wire)" stroke-width="1.5"/>
+            <path class="wire wire-optional" d="M378 214 V70 H404" fill="none" stroke="url(#wire)" stroke-width="1.5"/>
+            <path class="wire wire-optional" d="M470 98 V182" fill="none" stroke="url(#wire)" stroke-width="1.5"/>
             <path class="wire wire-main" d="M470 214 V340" fill="none" stroke="url(#wire)" stroke-width="1.5"/>
-            <circle id="packet" class="packet" cx="90" cy="70" r="5" fill="#ff4103"/>
+            <polyline id="trail" class="trail" points="90,70"/>
+            <text class="chain-cap" x="47" y="314">RECEIPT CHAIN</text>
+            <path class="chain-link" d="M383 340 H404"/>
+            <g id="chain-row" class="chain" aria-hidden="true"></g>
+            <!-- Under the nodes: the packet travels the wires and goes into each stage. -->
+            <g id="packet" class="packet" transform="translate(90 70)"><circle r="16" fill="url(#halo)"/><circle class="packet-core" r="5" fill="#ff4103"/></g>
             <g data-stage><rect x="24" y="42" width="132" height="56" rx="10" fill="#001019" stroke="#20414f"/><text x="90" y="66" text-anchor="middle" fill="#eef4f7" font-size="13" font-family="Inter,sans-serif">Principal</text><text x="90" y="84" text-anchor="middle" fill="#7d98a6" font-size="10" font-family="Inter,sans-serif">signed grant</text></g>
             <g data-stage><rect x="214" y="42" width="132" height="56" rx="10" fill="#001019" stroke="#20414f"/><text x="280" y="66" text-anchor="middle" fill="#eef4f7" font-size="13" font-family="Inter,sans-serif">Agent intent</text><text x="280" y="84" text-anchor="middle" fill="#7d98a6" font-size="10" font-family="Inter,sans-serif">no target URL</text></g>
-            <g data-stage><rect x="196" y="182" width="168" height="64" rx="12" fill="#0a2b3a" stroke="#ff4103"/><text x="280" y="210" text-anchor="middle" fill="#eef4f7" font-size="14" font-family="Inter,sans-serif">MANDATE</text><text x="280" y="228" text-anchor="middle" fill="#ff4103" font-size="10" font-family="Inter,sans-serif">evaluate · reserve · bind</text></g>
-            <g data-stage><rect x="214" y="312" width="132" height="56" rx="10" fill="#001019" stroke="#20414f"/><text x="280" y="336" text-anchor="middle" fill="#eef4f7" font-size="13" font-family="Inter,sans-serif">Human step-up</text><text x="280" y="354" text-anchor="middle" fill="#7d98a6" font-size="10" font-family="Inter,sans-serif">if required</text></g>
+            <g data-stage class="gate"><rect x="196" y="182" width="168" height="64" rx="12" fill="#0a2b3a" stroke="#ff4103"/><text x="280" y="210" text-anchor="middle" fill="#eef4f7" font-size="14" font-family="Inter,sans-serif" letter-spacing="1.5">MANDATE</text><text id="gate-note" x="280" y="228" text-anchor="middle" fill="#ff4103" font-size="10" font-family="Inter,sans-serif">evaluate · reserve · bind</text></g>
+            <g data-stage><rect x="404" y="42" width="132" height="56" rx="10" fill="#001019" stroke="#20414f"/><text x="470" y="66" text-anchor="middle" fill="#eef4f7" font-size="13" font-family="Inter,sans-serif">Human step-up</text><text x="470" y="84" text-anchor="middle" fill="#7d98a6" font-size="10" font-family="Inter,sans-serif">if required</text></g>
             <g data-stage><rect x="404" y="182" width="132" height="56" rx="10" fill="#001019" stroke="#20414f"/><text x="470" y="206" text-anchor="middle" fill="#eef4f7" font-size="13" font-family="Inter,sans-serif">Upstream</text><text x="470" y="224" text-anchor="middle" fill="#7d98a6" font-size="10" font-family="Inter,sans-serif">registered route</text></g>
-            <g data-stage><rect x="404" y="312" width="132" height="56" rx="10" fill="#001019" stroke="#20414f"/><text x="470" y="336" text-anchor="middle" fill="#eef4f7" font-size="13" font-family="Inter,sans-serif">Receipt</text><text x="470" y="354" text-anchor="middle" fill="#7d98a6" font-size="10" font-family="Inter,sans-serif">signed · chained</text></g>
+            <g data-stage><rect x="404" y="312" width="132" height="56" rx="10" fill="#001019" stroke="#20414f"/><text x="470" y="336" text-anchor="middle" fill="#eef4f7" font-size="13" font-family="Inter,sans-serif">Receipt</text><text id="receipt-note" x="470" y="354" text-anchor="middle" fill="#7d98a6" font-size="10" font-family="Inter,sans-serif">signed · chained</text></g>
+            <circle id="ping" class="ping" cx="90" cy="70" r="30"/>
+            <path id="cut" class="cut" d="M385 208l12 12M397 208l-12 12"/>
+            <g id="stamp" class="stamp" aria-hidden="true"><rect x="226" y="146" width="108" height="30" rx="4"/><text x="280" y="167" text-anchor="middle" font-size="15" font-weight="700" font-family="Inter,sans-serif" letter-spacing="3">DENIED</text></g>
           </svg>
           <p class="stage-label" id="stage-label">Stage 01 · Principal signs a scoped grant</p>
         </aside>
