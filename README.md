@@ -26,12 +26,14 @@ deterministic, and a refusal names the rule that fired.
 
 - **Principal** — you, or your organization. Issues the grant and holds the
   key that approves.
-- **Agent** — proposes calls. It cannot name a URL, raise a limit, or approve
-  itself.
+- **Agent** — proposes calls. It cannot choose the MCP server or HTTP route a
+  call is sent to — those are configured, not supplied — raise a limit, or
+  approve itself.
 - **Mandate** — sits in between, as an MCP guard (stdio) or an HTTP gateway.
   The tool behind it does not change.
-- **Receipts** — every outcome is signed and chained; `mandate chain verify`
-  proves the history is complete and unedited.
+- **Receipts** — every outcome is signed and chained. `mandate chain verify`
+  proves nothing in the chain was edited, removed or inserted; entries cut off
+  its end show only against a head kept elsewhere (`--anchors`).
 
 ## Quickstart
 

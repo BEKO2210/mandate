@@ -124,8 +124,10 @@ never to, which makes one compromise unbounded in time.
 mandate chain rotate --db … --config guard.toml --to did:key:z6Mku1qK…
 ```
 
-A thief holding the current key cannot appoint themselves, and cannot rewrite
-anything from before the rotation that handed them nothing.
+A key that has been rotated out cannot sign a rotation, so whoever steals an
+old key cannot appoint themselves, and nobody can rewrite what came before the
+rotation. A thief holding the *current* key can rotate to one of their own:
+rotation bounds a compromise in time, it does not undo one.
 
 **The road, not just the destination.** Verification checks that the states a
 receipt passed through are a sequence the state machine allows, so a history

@@ -58,7 +58,7 @@ by reading the code. Gates G165–G168 exist because of it.
 | Walk a receipt backwards, or skip authorization | the state machine, entry by entry |
 | Cut entries off the end of the chain | an anchor kept elsewhere — nothing inside the database can |
 | Rewrite the head under an anchor somebody kept | that anchor |
-| Steal the key and declare yourself the signer | a rotation is signed by the key being replaced |
+| Steal a rotated-out key and declare yourself the signer | a rotation is signed by the key being replaced |
 | Poison a field with an unpaired surrogate | the strict parser — it used to crash the verifier mid-run and take the whole report with it |
 | Poison a field any other way — a proof that is a list, nesting past the parser's limit | the error boundary, which catches everything: one bad row is one finding, never the run |
 | Put a proof on a receipt that names something other than a `did:key` | `verify_object`, which fails closed: malformed is simply not verified |
@@ -185,10 +185,12 @@ mandate chain rotate --db … --config guard.toml --to did:key:z6Mku1qK…
 ```
 
 The rotation entry is signed by the key **being replaced**. So a thief holding
-the current key cannot declare themselves the signer, and cannot rewrite
-anything that happened before the rotation that handed them nothing. The
-window a compromise covers becomes the time between rotations instead of the
-life of the deployment.
+a key that has already been rotated out cannot declare themselves the signer,
+and nobody can rewrite anything that happened before a rotation with the key
+that followed it. A thief holding the *current* key can sign a rotation to a
+key of their own — that is what holding the current key means. The window a
+compromise covers becomes the time between rotations instead of the life of
+the deployment.
 
 ## The road, not just the destination
 

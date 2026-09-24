@@ -186,7 +186,8 @@ The limits, none of them fixable from inside the database:
   key compromise; it does not survive one. `mandate chain rotate` bounds how
   long a compromise reaches: the rotation entry is signed by the key being
   replaced, so a thief cannot reach back past the rotation that preceded
-  them, and cannot appoint themselves. The window becomes the interval
+  them, and a rotated-out key cannot appoint anyone. The current key can —
+  holding it is the compromise. The window becomes the interval
   between rotations rather than the life of the deployment.
 * **The baseline's first write.** The number of receipts predating the chain
   bounds how many unchained ones are tolerated, and is bound into genesis so it

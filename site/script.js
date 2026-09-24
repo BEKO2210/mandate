@@ -26,13 +26,25 @@
     });
   });
 
+  // The film never autoplays from markup: without script it is a still
+  // poster. With script it plays only when motion is welcome, and it can
+  // always be paused.
   const media = window.matchMedia("(prefers-reduced-motion: reduce)");
   const film = document.getElementById("film");
+  const filmToggle = document.getElementById("film-toggle");
+  let filmPaused = false;
   const syncFilm = () => {
     if (!film) return;
-    if (media.matches) film.pause();
-    else film.play().catch(() => {});
+    const run = !media.matches && !filmPaused;
+    if (run) film.play().catch(() => {});
+    else film.pause();
+    if (filmToggle) {
+      filmToggle.hidden = media.matches;
+      filmToggle.setAttribute("aria-pressed", String(filmPaused));
+      filmToggle.textContent = filmPaused ? "Play background" : "Pause background";
+    }
   };
+  if (filmToggle) filmToggle.addEventListener("click", () => { filmPaused = !filmPaused; syncFilm(); });
   media.addEventListener("change", syncFilm);
   syncFilm();
 

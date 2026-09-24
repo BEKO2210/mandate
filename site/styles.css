@@ -230,6 +230,12 @@ code { overflow-wrap: anywhere; }
 @keyframes waiting { 50% { background: rgba(255, 65, 3, 0.18); } }
 .caret::after { content: "▍"; color: var(--fire); margin-left: 2px; animation: blink 1s steps(1) infinite; }
 @keyframes blink { 50% { opacity: 0; } }
+.film-toggle {
+  position: absolute; right: 22px; bottom: 22px; z-index: 6;
+  background: rgba(0, 16, 25, 0.7); border: 1px solid var(--line); border-radius: 999px;
+  color: var(--muted); font: 600 0.68rem/1 var(--sans); padding: 8px 14px; cursor: pointer;
+}
+.film-toggle:hover { color: var(--paper); border-color: var(--line-fire); }
 @media (prefers-reduced-motion: reduce) {
   .hero-film video { display: none; }
   .hero-film { background: url("./media/hero-poster.webp") center / cover no-repeat; }

@@ -16,16 +16,34 @@ from mandate.demo_shop.scenario import EXPECTED, STEPS
 
 def test_website_demo_matches_the_shop_scenario():
     html = Path("site/index.html").read_text(encoding="utf-8")
-    items = re.findall(r'<li data-outcome="([A-Z_]+)"[^>]*>.*?<b>(.*?)</b>', html, re.S)
+    items = re.findall(
+        r'<li data-outcome="([A-Z_]+)"(?: data-spent="(\d+)")?[^>]*>.*?<b>(.*?)</b>', html, re.S
+    )
     assert len(items) == len(STEPS), "the page shows every step of the scenario, no more"
 
-    for (outcome, label), (step_label, tool, _), expected in zip(items, STEPS, EXPECTED):
+    # The budget bar replays the day's spend: it moves exactly when an order
+    # is placed, by that order's amount — the held laptop counts when the
+    # human approves it, not when it is proposed.
+    spent, held = 0, None
+    for (outcome, shown_spent, label), (step_label, tool, args), expected in zip(items, STEPS, EXPECTED):
         label = unescape(label)
         assert outcome == expected, (label, outcome, expected)
         if tool is None:
             assert label.startswith("the human approves rcpt_"), label
         else:
             assert label == step_label, (label, step_label)
+        if expected == "HUMAN_REQUIRED":
+            held = args["amount"]
+        placed = args["amount"] if (tool == "buy" and expected == "EXECUTED") else (
+            held if tool is None else None)
+        if placed is not None:
+            spent += placed
+        assert shown_spent == (str(spent) if placed is not None else ""), (label, shown_spent, spent)
+
+    total = re.search(r'<b id="budget-num">(\d+) / (\d+) EUR</b>', html)
+    assert total and (int(total.group(1)), int(total.group(2))) == (spent, 300)
+    bar = re.search(r'<s id="budget-bar" style="width: ([\d.]+)%', html)
+    assert bar and abs(float(bar.group(1)) - spent / 300 * 100) < 0.1
 
     scenario = Path("mandate/demo_shop/scenario.py").read_text(encoding="utf-8")
     grant = re.search(r'<p class="demo-grant">(.*?)</p>', html).group(1)
