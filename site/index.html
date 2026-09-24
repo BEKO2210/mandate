@@ -23,6 +23,7 @@
         <span>Mandate</span><span class="ver">v0.10.0</span>
       </a>
       <nav class="links" id="nav-links">
+        <a href="#demo">Demo</a>
         <a href="#diagram">Architecture</a>
         <a href="#flow">How it works</a>
         <a href="#chain">Receipt chain</a>
@@ -39,52 +40,53 @@
 
   <main id="main">
     <section class="hero" id="top">
+      <div class="hero-film" aria-hidden="true">
+        <video id="film" muted loop playsinline preload="metadata" poster="./media/hero-poster.webp">
+          <source src="./media/hero-film.webm" type="video/webm" />
+          <source src="./media/hero-film.mp4" type="video/mp4" />
+        </video>
+      </div>
       <div class="wrap hero-grid">
-        <div>
-          <p class="eyebrow">Enforcement gateway · 289 gates passing</p>
-          <h1>Authorization<br />before execution.</h1>
-          <p class="lead">Mandate sits in front of protected tools. An AI agent may propose an action. It does not execute until a signed, scoped, budget-aware grant has been verified — and every outcome becomes a receipt that cannot be edited without showing it.</p>
+        <div class="hero-copy">
+          <p class="eyebrow">v0.10.0 · 289 gates passing</p>
+          <h1>Authorization<br /><span class="fire">before execution.</span></h1>
+          <p class="lead">A permission layer for AI agents. Your agent proposes a call &mdash; Mandate lets it through only if a signed grant allows it: in scope, under budget, a vendor on the list, a human&rsquo;s approval above a threshold. Every decision becomes a receipt nobody can quietly edit.</p>
+          <div class="install">
+            <code id="install-cmd">pip install "mandate[mcp] @ git+https://github.com/BEKO2210/mandate"</code>
+            <button class="copy" type="button" data-copy="install-cmd">Copy</button>
+          </div>
+          <p class="install-note">Then <code>mandate demo shop</code>. Not on PyPI yet &mdash; the package named <code>mandate</code> there is someone else&rsquo;s.</p>
           <div class="actions">
             <a class="btn btn-solid" href="https://github.com/BEKO2210/mandate">View source</a>
-            <a class="btn btn-ghost" href="#chain">See the receipt chain</a>
-          </div>
-          <div class="pills">
-            <span class="pill">Signers <b>&rarr;</b> KMS · Vault · file</span>
-            <span class="pill">Ledger <b>&rarr;</b> SQLite, ACID</span>
-            <span class="pill">Verify <b>&rarr;</b> no key required</span>
+            <a class="btn btn-ghost" href="https://github.com/BEKO2210/mandate/blob/main/docs/MCP.md">Guard your MCP server</a>
           </div>
         </div>
-        <aside class="stageboard" aria-labelledby="flow-title">
-          <svg class="flow-svg" viewBox="0 0 560 420" role="img" aria-labelledby="flow-title flow-desc">
-            <title id="flow-title">Mandate authorization flow</title>
-            <desc id="flow-desc">Principal grants authority to an agent. Mandate evaluates the intent. Human approval may be requested. Only an authorized request reaches the registered upstream. When a check fails the request is denied and nothing is sent. Every outcome, a denial included, becomes a signed receipt.</desc>
-            <defs>
-              <linearGradient id="wire" x1="0" x2="1"><stop stop-color="#ff4103"/><stop offset="1" stop-color="#eef4f7"/></linearGradient>
-              <radialGradient id="halo"><stop stop-color="#ff4103" stop-opacity="0.55"/><stop offset="1" stop-color="#ff4103" stop-opacity="0"/></radialGradient>
-            </defs>
-            <path class="wire wire-main" d="M90 70 H280 V214 H470" fill="none" stroke="url(#wire)" stroke-width="1.5"/>
-            <path class="wire wire-optional" d="M378 214 V70 H404" fill="none" stroke="url(#wire)" stroke-width="1.5"/>
-            <path class="wire wire-optional" d="M470 98 V182" fill="none" stroke="url(#wire)" stroke-width="1.5"/>
-            <path class="wire wire-main" d="M470 214 V340" fill="none" stroke="url(#wire)" stroke-width="1.5"/>
-            <polyline id="trail" class="trail" points="90,70"/>
-            <text class="chain-cap" x="47" y="314">RECEIPT CHAIN</text>
-            <path class="chain-link" d="M383 340 H404"/>
-            <g id="chain-row" class="chain" aria-hidden="true"></g>
-            <!-- Under the nodes: the packet travels the wires and goes into each stage. -->
-            <g id="packet" class="packet" transform="translate(90 70)"><circle r="16" fill="url(#halo)"/><circle class="packet-core" r="5" fill="#ff4103"/></g>
-            <g data-stage><rect x="24" y="42" width="132" height="56" rx="10" fill="#001019" stroke="#20414f"/><text x="90" y="66" text-anchor="middle" fill="#eef4f7" font-size="13" font-family="Inter,sans-serif">Principal</text><text x="90" y="84" text-anchor="middle" fill="#7d98a6" font-size="10" font-family="Inter,sans-serif">signed grant</text></g>
-            <g data-stage><rect x="214" y="42" width="132" height="56" rx="10" fill="#001019" stroke="#20414f"/><text x="280" y="66" text-anchor="middle" fill="#eef4f7" font-size="13" font-family="Inter,sans-serif">Agent intent</text><text x="280" y="84" text-anchor="middle" fill="#7d98a6" font-size="10" font-family="Inter,sans-serif">no target URL</text></g>
-            <g data-stage class="gate"><rect x="196" y="182" width="168" height="64" rx="12" fill="#0a2b3a" stroke="#ff4103"/><text x="280" y="210" text-anchor="middle" fill="#eef4f7" font-size="14" font-family="Inter,sans-serif" letter-spacing="1.5">MANDATE</text><text id="gate-note" x="280" y="228" text-anchor="middle" fill="#ff4103" font-size="10" font-family="Inter,sans-serif">evaluate · reserve · bind</text></g>
-            <g data-stage><rect x="404" y="42" width="132" height="56" rx="10" fill="#001019" stroke="#20414f"/><text x="470" y="66" text-anchor="middle" fill="#eef4f7" font-size="13" font-family="Inter,sans-serif">Human step-up</text><text x="470" y="84" text-anchor="middle" fill="#7d98a6" font-size="10" font-family="Inter,sans-serif">if required</text></g>
-            <g data-stage><rect x="404" y="182" width="132" height="56" rx="10" fill="#001019" stroke="#20414f"/><text x="470" y="206" text-anchor="middle" fill="#eef4f7" font-size="13" font-family="Inter,sans-serif">Upstream</text><text x="470" y="224" text-anchor="middle" fill="#7d98a6" font-size="10" font-family="Inter,sans-serif">registered route</text></g>
-            <g data-stage><rect x="404" y="312" width="132" height="56" rx="10" fill="#001019" stroke="#20414f"/><text x="470" y="336" text-anchor="middle" fill="#eef4f7" font-size="13" font-family="Inter,sans-serif">Receipt</text><text id="receipt-note" x="470" y="354" text-anchor="middle" fill="#7d98a6" font-size="10" font-family="Inter,sans-serif">signed · chained</text></g>
-            <circle id="ping" class="ping" cx="90" cy="70" r="30"/>
-            <path id="cut" class="cut" d="M385 208l12 12M397 208l-12 12"/>
-            <g id="stamp" class="stamp" aria-hidden="true"><rect x="226" y="146" width="108" height="30" rx="4"/><text x="280" y="167" text-anchor="middle" font-size="15" font-weight="700" font-family="Inter,sans-serif" letter-spacing="3">DENIED</text></g>
-          </svg>
-          <p class="stage-label" id="stage-label">Stage 01 · Principal signs a scoped grant</p>
+
+        <aside class="demo" id="demo" aria-labelledby="demo-title">
+          <div class="demo-bar">
+            <span class="dots" aria-hidden="true"><i></i><i></i><i></i></span>
+            <span id="demo-title">mandate demo shop &middot; recorded output</span>
+            <button class="replay" id="replay" type="button" hidden>Replay</button>
+          </div>
+          <div class="demo-body">
+            <p class="demo-cmd"><span class="muted">$</span> <span id="demo-typed">mandate demo shop</span></p>
+            <p class="demo-grant">Grant: 300 EUR a day, at most 500 per order, two named vendors, a human above 100.</p>
+            <ol class="demo-steps">
+              <li data-outcome="EXECUTED"><span class="o o-ran">RAN</span><b>look at the catalogue</b><span class="msg">paper-co.example &nbsp; copy paper, 10 boxes &nbsp; 40 EUR &hellip;</span></li>
+              <li data-outcome="EXECUTED" data-spent="40"><span class="o o-ran">RAN</span><b>copy paper, 40 EUR</b><span class="msg">Order ord_104c6f9c02 placed: copy paper, 10 boxes from paper-co.example, 40 EUR.</span></li>
+              <li data-outcome="DENIED"><span class="o o-deny">DENIED</span><b>toner from a vendor the grant does not name</b><span class="msg">Mandate denied this call: counterparty shady-imports.example not in allow-list. &hellip; Receipt rcpt_d45587e3&hellip;</span></li>
+              <li data-outcome="REFUSED"><span class="o o-deny">REFUSED</span><b>an order that names no vendor</b><span class="msg">Mandate refused this call: argument &lsquo;vendor&rsquo; is configured as the counterparty and must be a non-empty string</span></li>
+              <li data-outcome="HUMAN_REQUIRED"><span class="o o-held">HELD</span><b>a laptop, 250 EUR &mdash; over the approval threshold</b><span class="msg">Mandate is holding this call for human approval: amount 250.00 requires human approval above 100.00. Receipt rcpt_6e5711e8&hellip; is waiting. &hellip;</span></li>
+              <li data-outcome="DENIED"><span class="o o-deny">DENIED</span><b>a 800 EUR order &mdash; over the per-order limit</b><span class="msg">Mandate denied this call: amount 800.00 exceeds max_amount 500.00; &hellip;</span></li>
+              <li data-outcome="EXECUTED" data-spent="290" class="human"><span class="o o-ran">RAN</span><b>the human approves rcpt_6e5711e8&hellip;</b><span class="msg"><span class="muted">$ mandate mcp approve --receipt rcpt_6e5711e8&hellip;</span><br />EXECUTED: Order ord_d1fb7be140 placed: laptop from office-depot.example, 250 EUR.</span></li>
+              <li data-outcome="DENIED"><span class="o o-deny">DENIED</span><b>sticky notes, 20 EUR &mdash; the day's budget is spent</b><span class="msg">Mandate denied this call: amount would exceed daily cap 300.00 (already spent 290.00). &hellip;</span></li>
+            </ol>
+            <div class="budget" aria-hidden="true"><span>Spent today</span><i><s id="budget-bar" style="width: 96.7%"></s></i><b id="budget-num">290 / 300 EUR</b></div>
+            <p class="demo-sum">Orders placed: 2 (290 EUR). Receipt chain: <span class="ok">intact</span>.</p>
+          </div>
         </aside>
       </div>
+      <button class="film-toggle" id="film-toggle" type="button" aria-pressed="false" hidden>Pause background</button>
       <div class="combo" aria-hidden="true">Deny<br />by<br />default</div>
     </section>
 
@@ -94,12 +96,12 @@
         <h2>Six stages.<br />One enforcement boundary.</h2>
         <p class="section-lead">The request moves through these stages in order. Human approval is conditional. If any required stage fails, the upstream connector is never reached.</p>
         <ol class="arch">
-          <li data-stage class="rise"><span class="arch-id">01</span><strong>Principal</strong><em>signed grant</em></li>
-          <li data-stage class="rise"><span class="arch-id">02</span><strong>Agent</strong><em>intent only</em></li>
-          <li data-stage class="arch-core rise"><span class="arch-id">03</span><strong>Mandate</strong><em>policy · budget · route</em></li>
-          <li data-stage class="rise"><span class="arch-id">04</span><strong>Human</strong><em>if required</em></li>
-          <li data-stage class="rise"><span class="arch-id">05</span><strong>Upstream</strong><em>registered route</em></li>
-          <li data-stage class="rise"><span class="arch-id">06</span><strong>Receipt</strong><em>signed · chained</em></li>
+          <li><span class="arch-id">01</span><strong>Principal</strong><em>signed grant</em></li>
+          <li><span class="arch-id">02</span><strong>Agent</strong><em>intent only</em></li>
+          <li class="arch-core"><span class="arch-id">03</span><strong>Mandate</strong><em>policy · budget · route</em></li>
+          <li><span class="arch-id">04</span><strong>Human</strong><em>if required</em></li>
+          <li><span class="arch-id">05</span><strong>Upstream</strong><em>registered route</em></li>
+          <li><span class="arch-id">06</span><strong>Receipt</strong><em>signed · chained</em></li>
         </ol>
         <p class="arch-note">No valid authorization &rarr; no upstream execution.</p>
       </div>
@@ -141,7 +143,7 @@ longer reaches it
           </div>
           <div class="status-list">
             <article><header><strong>Anchors, sent to a witness</strong><span class="tag tag-ok">v0.9.0</span></header><p>A prefix of a valid chain is a valid chain, so truncation is invisible from inside a database. The gateway posts its heads to a witness someone else runs, on a schedule; <code>--anchors</code> checks them. A witness that does not accept is a failure, never a silence.</p></article>
-            <article><header><strong>Key rotation</strong><span class="tag tag-ok">v0.8.0</span></header><p>The rotation entry is signed by the key being replaced, so a stolen key cannot appoint itself or reach back past the rotation.</p></article>
+            <article><header><strong>Key rotation</strong><span class="tag tag-ok">v0.8.0</span></header><p>The rotation entry is signed by the key being replaced, so a retired key cannot appoint anyone and nothing before a rotation can be re-signed by the key after it.</p></article>
             <article><header><strong>Legal roads</strong><span class="tag tag-ok">v0.8.0</span></header><p>The states a receipt passed through are checked against the state machine, not only its destination.</p></article>
             <article><header><strong>Verification needs no key</strong><span class="tag tag-ok">v0.7.0</span></header><p>The person who most needs to check a chain is the one who does not trust whoever runs it.</p></article>
             <article><header><strong>A compromised signing key</strong><span class="tag tag-note">Bounded, not closed</span></header><p>It re-signs receipts and chain together while it is held. Rotation bounds the window; nothing bounds what the key does inside it.</p></article>
@@ -157,12 +159,13 @@ longer reaches it
         <div class="facts">
           <article><h3>Cryptographic grants</h3><p>Principal authorization is signed and independently verifiable.</p></article>
           <article><h3>Atomic budget accounting</h3><p>Spend is kept in integer minor units, bound to the authorization day.</p></article>
-          <article><h3>Human approval that revalidates</h3><p>Step-up does not skip evaluation.</p></article>
+          <article><h3>Human approval that revalidates</h3><p>Step-up does not skip evaluation. Over MCP it is one command, and the agent's key cannot give it.</p></article>
           <article><h3>Server-side destinations</h3><p>Public is the default. Private requires server-side opt-in.</p></article>
           <article><h3>Uncertainty stays explicit</h3><p>A timeout becomes EXECUTION_UNKNOWN rather than a guess.</p></article>
           <article><h3>Keys that never enter the process</h3><p>AWS KMS, GCP Cloud KMS and Vault sign without handing the key back.</p></article>
           <article><h3>Authenticated and tenant-scoped</h3><p>Every call carries an API key. A tenant never sees another tenant's records.</p></article>
-          <article><h3>In front of MCP tools</h3><p>The guard re-exposes an MCP server's tools and authorizes every call.</p></article>
+          <article><h3>In front of MCP tools</h3><p>The guard re-exposes an MCP server's tools and authorizes every call. Claude Code and Cursor connect with one line.</p></article>
+          <article><h3>A few milliseconds a decision</h3><p>Measured, with the method and the ceiling written down, not hidden.</p></article>
           <article><h3>One file, read strictly</h3><p>Routes, signers, limits and anchoring come from one configuration. A misspelt key is an error, never a default.</p></article>
           <article><h3>Unknown outcomes, settled on the record</h3><p>An operator who asked the upstream resolves EXECUTION_UNKNOWN. Who decided and why is signed into the receipt.</p></article>
         </div>
@@ -185,12 +188,16 @@ longer reaches it
 <span class="ok">G202 PASS</span>  DNS answers twice
 <span class="ok">G207 PASS</span>  Four workers, one limit
 <span class="ok">G220 PASS</span>  Unknown outcome, resolved
-<span class="ok">G226 PASS</span>  Unsignable outcome</pre>
+<span class="ok">G226 PASS</span>  Unsignable outcome
+<span class="ok">G251 PASS</span>  Payment to nobody named
+<span class="ok">G257 PASS</span>  Approved call runs once</pre>
           </div>
           <div class="status-list">
             <article><header><strong>Policy held at the socket</strong><span class="tag tag-ok">Closed</span></header><p>HTTPS connects to the address the destination policy checked, and no environment proxy re-resolves it. G202, G204.</p></article>
             <article><header><strong>One limit across workers</strong><span class="tag tag-ok">Closed</span></header><p>The rate limit lives in the ledger, so four workers do not mean four times the limit. G207.</p></article>
             <article><header><strong>Nothing sent that cannot be recorded</strong><span class="tag tag-ok">Closed</span></header><p>An execution whose receipt could outgrow the signer is refused before dispatch. G226.</p></article>
+            <article><header><strong>No vendor, no payment</strong><span class="tag tag-ok">Closed</span></header><p>An allow-list was consulted only when a call named a vendor, so naming none walked past it. A payment now has to name who is paid. G251, G252.</p></article>
+            <article><header><strong>Approvals expire</strong><span class="tag tag-ok">Closed</span></header><p>An approval without a timestamp counted as fresh forever. It now carries one and lives ten minutes. G249, G250.</p></article>
             <article><header><strong>Typos are errors</strong><span class="tag tag-ok">Closed</span></header><p>A misspelt limit used to be dropped and the grant issued without it. G217.</p></article>
             <article><header><strong>What the upstream received</strong><span class="tag tag-note">Known limit</span></header><p>The receipt binds the bytes the gateway sent. Only the upstream can say what arrived.</p></article>
           </div>
@@ -211,10 +218,12 @@ longer reaches it
             <li><code>GET /health</code><span>Liveness only. Reveals nothing.</span></li>
             <li><code>mandate gateway serve</code><span>Run it from one configuration file.</span></li>
             <li><code>mandate gateway resolve</code><span>Settle an unknown outcome, on the record.</span></li>
+            <li><code>mandate mcp approve</code><span>Approve a held MCP call. It runs once.</span></li>
+            <li><code>mandate demo shop</code><span>Watch an agent shop against a grant.</span></li>
           </ul>
         </div>
         <div class="codebox">
-          <div class="codehead"><span>gateway.json</span><button class="copy" type="button" data-copy>Copy</button></div>
+          <div class="codehead"><span>gateway.json</span><button class="copy" type="button" data-copy="snippet">Copy</button></div>
           <pre id="snippet">{
   "store": "/var/lib/mandate",
   "enforcer_signer": {

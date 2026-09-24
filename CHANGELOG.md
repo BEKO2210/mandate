@@ -3,6 +3,23 @@
 All notable changes to this project are documented here.
 This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+- **The README starts with what Mandate is, not with what changed.** A
+  two-paragraph pitch, a diagram of how principal, agent, Mandate, tool and
+  receipt chain fit together, and a quickstart in three separate steps —
+  watch the demo, guard an MCP server, run the HTTP gateway. The release
+  narratives it used to open with, v0.10.0 back to v0.2.1, moved unchanged
+  to `docs/HISTORY.md`.
+- **The landing page shows the demo instead of an animation of the idea.**
+  The hero replays the recorded output of `mandate demo shop` — every step,
+  the held laptop, the human approving it, the day's budget running out —
+  over a muted background film. Without script or with reduced motion the
+  transcript simply stands there. A gate checks that the page's steps,
+  labels and outcomes are the ones the scenario plays, replacing the gate
+  that pinned the old animation.
+
 ## [0.10.0] — 2026-09-24
 
 ### Added
