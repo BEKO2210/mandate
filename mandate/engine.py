@@ -1047,6 +1047,35 @@ class Engine:
             raise MandateError("storage error") from exc
         return [json.loads(r["body"]) | {"tenant": r["tenant"]} for r in rows]
 
+    def held_receipts(self, tenant: str | None = None) -> list[dict[str, Any]]:
+        """Receipts waiting for a human, with what each would do if approved."""
+        try:
+            with self.ledger.tx() as tx:
+                rows = tx.receipts_in_state("HUMAN_REQUIRED", tenant)
+        except StorageError as exc:
+            raise MandateError("storage error") from exc
+        return [json.loads(r["body"]) | {"tenant": r["tenant"]} for r in rows]
+
+    def approved_unclaimed(self, tenant: str | None = None) -> list[dict[str, Any]]:
+        """Receipts a human approved whose dispatch never started.
+
+        Approval commits AUTHORIZED before the execution claim; a process that
+        stops between the two leaves a call nobody can approve again. It can be
+        dispatched: `execute` claims atomically, so it still runs at most once.
+        """
+        try:
+            with self.ledger.tx() as tx:
+                rows = tx.receipts_in_state("AUTHORIZED", tenant)
+                out = []
+                for r in rows:
+                    body = json.loads(r["body"])
+                    approved = (body.get("decision") or {}).get("approval_id")
+                    if approved and not tx.get_execution_by_receipt(r["id"]):
+                        out.append(body | {"tenant": r["tenant"]})
+        except StorageError as exc:
+            raise MandateError("storage error") from exc
+        return out
+
     def resolve_unknown(
         self, receipt_id: str, outcome: str, *, operator: str, reason: str,
         tenant: str = DEFAULT_TENANT, budget_day: str | None = None,

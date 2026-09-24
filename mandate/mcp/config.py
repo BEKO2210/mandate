@@ -66,6 +66,10 @@ class GuardConfig:
     # The key that issues the grant. Absent, `mcp init` writes it to the store
     # as a file; with a block it stays in the key manager.
     principal_signer: dict[str, Any] | None = None
+    # `store` as the file wrote it, before it was anchored to the file's
+    # directory. Kept so a store the guard used to resolve against its working
+    # directory can be recognised instead of silently replaced.
+    store_as_written: str | None = None
 
     def build_agent_signer(self) -> Signer | None:
         return signer_from_config(self.agent_signer) if self.agent_signer else None
@@ -123,11 +127,52 @@ def _known(block: Any, allowed: set[str], where: str) -> None:
 
 
 def load_config(path: str | Path) -> GuardConfig:
-    raw = json.loads(Path(path).read_text(encoding="utf-8"), object_pairs_hook=_no_duplicates)
-    return parse_config(raw)
+    """Read a guard configuration; relative paths in it follow the file.
+
+    Claude Code, Cursor and Claude Desktop start the guard from a directory
+    of their choosing. A store resolved against *that* would be a different
+    store per client — and `serve` then bootstraps a fresh principal, agent
+    and grant there without a word.
+    """
+    path = Path(path)
+    raw = json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=_no_duplicates)
+    config = parse_config(raw, base_dir=path.resolve().parent)
+    _refuse_a_stranded_store(config)
+    return config
 
 
-def parse_config(raw: dict[str, Any]) -> GuardConfig:
+def _refuse_a_stranded_store(config: GuardConfig) -> None:
+    """A relative store used to follow the working directory. If one was
+    initialized that way and the store the file now points at is empty, using
+    the new one would mint a second principal, agent and grant — with none of
+    the old receipts or budget behind them. Refuse, and say where the old one is.
+    """
+    written = config.store_as_written
+    if not written or Path(written).expanduser().is_absolute() or config.state_path.exists():
+        return
+    legacy = (Path.cwd() / written).resolve()
+    if legacy != config.store_path.resolve() and (legacy / "guard-state.json").exists():
+        raise MappingError(
+            f"store {written!r} now resolves next to the configuration file "
+            f"({config.store_path}), which is empty, but a guard was initialized at "
+            f"{legacy}. Set \"store\" to that absolute path to keep its grant, "
+            f"receipts and budget, or move it next to the configuration file."
+        )
+
+
+def _relative(base: Path | None, value: Any) -> Any:
+    if base is None or not isinstance(value, str) or not value:
+        return value
+    try:
+        path = Path(value).expanduser()
+    except RuntimeError as exc:  # an unknown ~user
+        raise MappingError(f"{value}: {exc}") from exc
+    return str(path if path.is_absolute() else base / path)
+
+
+def parse_config(raw: dict[str, Any], base_dir: str | Path | None = None) -> GuardConfig:
+    """`base_dir` anchors relative paths; without one they are left as given."""
+    base = Path(base_dir) if base_dir is not None else None
     _known(raw, _TOP, "configuration")
     if isinstance(raw.get("upstream"), dict):
         _known(raw["upstream"], _UPSTREAM, "upstream")
@@ -141,7 +186,7 @@ def parse_config(raw: dict[str, Any]) -> GuardConfig:
             command=upstream_raw["command"],
             args=tuple(upstream_raw.get("args") or ()),
             env=dict(upstream_raw.get("env") or {}),
-            cwd=upstream_raw.get("cwd"),
+            cwd=_relative(base, upstream_raw.get("cwd")),
         )
     except (KeyError, TypeError) as exc:
         raise MappingError(f"upstream must name a command to run: {exc}") from exc
@@ -190,18 +235,26 @@ def parse_config(raw: dict[str, Any]) -> GuardConfig:
             except SigningError as exc:
                 raise MappingError(f"{name}: {exc}") from exc
 
+    signers = {}
+    for name in ("agent_signer", "enforcer_signer", "principal_signer"):
+        block = raw.get(name)
+        if isinstance(block, dict) and block.get("kind") == "file" and "path" in block:
+            block = {**block, "path": _relative(base, block["path"])}
+        signers[name] = block
+
     return GuardConfig(
         audience=mapping.audience,
         upstream=upstream,
         mapping=mapping,
         grant=grant,
         tenant=raw.get("tenant", DEFAULT_TENANT),
-        store=raw.get("store", DEFAULT_STORE),
+        store=_relative(base, raw.get("store", DEFAULT_STORE)),
         timeout=float(raw.get("timeout", DEFAULT_TIMEOUT)),
         server_name=raw.get("server_name", "mandate_guard"),
-        agent_signer=raw.get("agent_signer"),
-        enforcer_signer=raw.get("enforcer_signer"),
-        principal_signer=raw.get("principal_signer"),
+        agent_signer=signers["agent_signer"],
+        enforcer_signer=signers["enforcer_signer"],
+        principal_signer=signers["principal_signer"],
+        store_as_written=raw.get("store", DEFAULT_STORE),
     )
 
 

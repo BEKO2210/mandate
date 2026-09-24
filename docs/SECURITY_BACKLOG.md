@@ -284,7 +284,11 @@ Covered by G251–G252.
   could exceed it is refused before dispatch, so the cost is capacity — less
   room for context — not a lost outcome
 - Without `principal_signer`, `mcp init` writes the grant-issuing key to the
-  store as a development file; that is a default an operator has to change
+  store as a development file; that is a default an operator has to change.
+  Since `mandate mcp approve` exists, that key is also the approval key: an
+  agent with a shell under the same user can read it and approve its own
+  held calls. `approve` refusing to run without a terminal is friction, not a
+  boundary
 - Resolving an EXECUTION_UNKNOWN receipt records an operator's finding; the
   engine cannot check it against the upstream, and the receipt says so by
   naming who decided
