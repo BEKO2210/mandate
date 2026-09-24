@@ -286,7 +286,7 @@ def _mcp(args) -> int:
         from .mcp.server import build_engine
 
         engine, _ = build_engine(config, _refuse_call, sorted(config.mapping.rules))
-        held = engine.held_receipts(config.tenant)
+        held = engine.held_receipts(config.tenant) + engine.approved_unclaimed(config.tenant)
         for rec in held:
             print(_describe_held(rec))
         if not held:
@@ -312,16 +312,27 @@ def _mcp(args) -> int:
     return 2
 
 
+def _printable(value) -> str:
+    """Show a value from a signed intent without letting it drive the terminal.
+
+    This is the screen a principal decides on; a counterparty carrying escape
+    sequences could redraw it. The signed value itself is never changed.
+    """
+    return "".join(c if c.isprintable() else repr(c)[1:-1] for c in str(value))
+
+
 def _describe_held(rec: dict) -> str:
     intent = rec.get("intent") or {}
     context = intent.get("context") or {}
     money = f"{intent.get('amount')} {intent.get('currency')}" if intent.get("amount") is not None else "-"
-    reasons = "; ".join((rec.get("decision") or {}).get("reasons") or [])
+    decision = rec.get("decision") or {}
+    reasons = "; ".join(decision.get("reasons") or [])
+    label = "approved, dispatch never started" if decision.get("approval_id") else "held because"
     return (
         f"{rec['id']}  {context.get('tool', intent.get('action', '?'))}  {money}"
-        f"  {intent.get('counterparty') or ''}\n"
-        f"{'':22}arguments {context.get('arguments_json', '{}')}\n"
-        f"{'':22}held because: {reasons}  (since {intent.get('created_at', '?')})"
+        f"  {_printable(intent.get('counterparty') or '')}\n"
+        f"{'':22}arguments {_printable(context.get('arguments_json', '{}'))}\n"
+        f"{'':22}{label}: {_printable(reasons)}  (since {_printable(intent.get('created_at', '?'))})"
     )
 
 
@@ -332,10 +343,13 @@ def _mcp_approve(config, args) -> int:
 
     engine, _ = build_engine(config, _refuse_call, sorted(config.mapping.rules))
     held = {rec["id"]: rec for rec in engine.held_receipts(config.tenant)}
-    rec = held.get(args.receipt)
+    # Approved before, but the process stopped before the call was dispatched.
+    stranded = {rec["id"]: rec for rec in engine.approved_unclaimed(config.tenant)}
+    rec = held.get(args.receipt) or stranded.get(args.receipt)
     if rec is None:
         print(f"{args.receipt} is not waiting for approval (see `mandate mcp pending`)", file=sys.stderr)
         return 1
+    resume = args.receipt in stranded
     print(_describe_held(rec))
     if not args.yes:
         # Friction, not a security boundary: an agent with a shell can pass
@@ -344,7 +358,8 @@ def _mcp_approve(config, args) -> int:
         if not sys.stdin.isatty():
             print("refusing to approve without a terminal; the principal passes --yes", file=sys.stderr)
             return 1
-        if input("Approve and run this call once? [y/N] ").strip().lower() not in {"y", "yes"}:
+        question = "Run this approved call now?" if resume else "Approve and run this call once?"
+        if input(f"{question} [y/N] ").strip().lower() not in {"y", "yes"}:
             print("not approved")
             return 1
     try:
@@ -355,7 +370,7 @@ def _mcp_approve(config, args) -> int:
         print(f"approving runs the call, which needs the mcp extra: {INSTALL_MCP}", file=sys.stderr)
         return 1
     try:
-        decision = anyio.run(approve_held, config, args.receipt)
+        decision = anyio.run(lambda: approve_held(config, args.receipt, resume=resume))
     except (FileNotFoundError, SigningError) as exc:
         print(f"cannot approve: {exc}", file=sys.stderr)
         return 1

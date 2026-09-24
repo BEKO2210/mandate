@@ -42,7 +42,7 @@ class McpGuard:
     def __init__(
         self,
         engine: Engine,
-        agent_signer: Signer,
+        agent_signer: Signer | None,
         grant_id: str,
         mapping: ToolMapping,
         tenant: str = DEFAULT_TENANT,
@@ -149,6 +149,14 @@ class McpGuard:
                 str(outcome),
                 receipt_id,
             )
+        return self._dispatch(receipt_id)
+
+    def resume(self, receipt_id: str) -> GuardDecision:
+        """Dispatch a call that was approved but never started.
+
+        The execution claim in `Engine.execute` is what keeps it to once: a
+        receipt already claimed is reported, not dispatched again.
+        """
         return self._dispatch(receipt_id)
 
     def _dispatch(self, receipt_id: str) -> GuardDecision:

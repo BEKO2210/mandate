@@ -20,7 +20,7 @@ from mandate.cli import main
 from mandate.mcp.clients import snippets
 from mandate.mcp.config import load_config, read_state
 from mandate.mcp.guard import McpGuard
-from mandate.mcp.server import build_engine, load_agent_signer, load_principal_signer
+from mandate.mcp.server import build_engine, load_agent_signer, load_principal_signer, open_guard
 
 from .test_mcp_gates import CONFIG, FakeUpstream, _direct_bridge, _world
 
@@ -69,6 +69,19 @@ def test_g256_a_relative_store_follows_the_config_file(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     assert read_state(load_config(path))["grant_id"] == read_state(config)["grant_id"]
 
+    # A guard initialized under the old rule — store beside where it was
+    # started — is not silently replaced by an empty one beside the file.
+    old_home = tmp_path / "old-launch-dir"
+    moved = _write_config(tmp_path / "moved", store=".mandate-mcp")
+    monkeypatch.chdir(old_home.parent)
+    old_home.mkdir()
+    monkeypatch.chdir(old_home)
+    legacy = old_home / ".mandate-mcp"
+    legacy.mkdir()
+    (legacy / "guard-state.json").write_text("{}", encoding="utf-8")
+    assert main(["mcp", "init", "--config", str(moved)]) == 1
+    assert not (tmp_path / "moved" / ".mandate-mcp").exists(), "no second identity may be minted"
+
 
 def test_g257_a_held_call_runs_exactly_once_after_approval(tmp_path):
     upstream = FakeUpstream(reply="paid")
@@ -87,6 +100,19 @@ def test_g257_a_held_call_runs_exactly_once_after_approval(tmp_path):
     assert len(upstream.calls) == 1
     assert guard.engine.verify_chain(expect_signer=guard.engine.enforcer_did).ok
 
+    # Approved, then the process stopped before dispatch: not stranded.
+    upstream = FakeUpstream(reply="paid")
+    config, _, _, guard = _world(tmp_path / "stopped", upstream)
+    second = guard.call("pay_invoice", OVER_THRESHOLD)
+    guard.engine.approve(second.receipt_id, load_principal_signer(config), tenant=guard.tenant)
+    assert [r["id"] for r in guard.engine.approved_unclaimed(guard.tenant)] == [second.receipt_id]
+    assert guard.approve(second.receipt_id, load_principal_signer(config)).outcome == "REFUSED"
+    resumed = guard.resume(second.receipt_id)
+    assert resumed.outcome == "EXECUTED" and upstream.calls == [("pay_invoice", OVER_THRESHOLD)]
+    assert guard.engine.approved_unclaimed(guard.tenant) == []
+    guard.resume(second.receipt_id)
+    assert len(upstream.calls) == 1, "the execution claim keeps it to once"
+
 
 def test_g258_the_agent_cannot_approve_its_own_call(tmp_path):
     upstream = FakeUpstream()
@@ -98,6 +124,13 @@ def test_g258_the_agent_cannot_approve_its_own_call(tmp_path):
     assert not refused.allowed and refused.outcome == "REFUSED"
     assert upstream.calls == []
     assert _state(guard, held.receipt_id) == "HUMAN_REQUIRED"
+
+    # Approving signs nothing as the agent: a missing agent key cannot block it.
+    (config.store_path / "keys" / "agent.key").unlink()
+    approver, _ = open_guard(config, upstream.call_tool, ["pay_invoice"], need_agent=False)
+    approver.executor._bridge = _direct_bridge
+    assert approver.approve(held.receipt_id, load_principal_signer(config)).outcome == "EXECUTED"
+    assert len(upstream.calls) == 1
 
 
 def test_g259_pending_shows_what_approval_would_run(tmp_path, capsys, monkeypatch):
@@ -111,6 +144,12 @@ def test_g259_pending_shows_what_approval_would_run(tmp_path, capsys, monkeypatc
     out = capsys.readouterr().out
     assert held.receipt_id in out and "pay_invoice" in out and "800" in out
     assert '"vendor":"dell.com"' in out and "requires human approval" in out
+
+    # The screen a principal decides on cannot be driven by the call itself.
+    _guard(load_config(path), upstream).call("pay_invoice", {**OVER_THRESHOLD, "vendor": "evil\x1b[2J.com"})
+    assert main(["mcp", "pending", "--config", str(path)]) == 0
+    out = capsys.readouterr().out
+    assert "\x1b" not in out and "evil\\x1b[2J.com" in out
 
     # Without a terminal and without --yes, approve refuses before running anything.
     monkeypatch.setattr(sys, "stdin", io.StringIO(""))
@@ -146,3 +185,8 @@ def test_g261_a_bad_config_is_one_line_not_a_traceback(tmp_path, capsys):
     broken.write_text('{"audience": "mandate://x", "audience": "mandate://y"}', encoding="utf-8")
     assert main(["mcp", "init", "--config", str(broken)]) == 1
     assert "duplicate key" in capsys.readouterr().err
+
+    unknown_home = _write_config(tmp_path / "tilde", store="~no_such_user_zz9/store")
+    assert main(["mcp", "pending", "--config", str(unknown_home)]) == 1
+    err = capsys.readouterr().err
+    assert err.startswith("configuration: INVALID") and "Traceback" not in err

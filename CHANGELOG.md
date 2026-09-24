@@ -12,7 +12,12 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   reason; `mandate mcp approve --receipt …` shows the call, asks, signs the
   approval with the principal key and runs it once, after revalidation. The
   agent's key cannot approve, a second approval is refused, and the model is
-  now told to ask the user rather than how to approve. (G257–G259)
+  now told to ask the user rather than how to approve. Approving needs the
+  principal key only, not a working agent key. A call approved whose dispatch
+  never started — the process stopped in between — is listed by `pending`
+  and dispatched by `approve`; the execution claim still keeps it to once.
+  What `pending` and `approve` print from a signed intent is escaped, so a
+  counterparty cannot drive the terminal the principal decides on. (G257–G259)
 - **`mandate mcp init` prints how to connect a client**: the `claude mcp add`
   line for Claude Code and the `mcpServers` entry for Cursor and Claude
   Desktop, with absolute paths and interpreter. (G260)
@@ -36,6 +41,10 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   against the directory the client happened to start the guard in; Claude
   Code and Cursor start it elsewhere, and the guard then bootstrapped a fresh
   principal, agent and grant there without a word. (G256)
+  **Upgrading:** a guard initialized under the old rule, from a directory
+  other than the configuration's, is not silently replaced: while the new
+  location is empty and the old one holds a guard, every `mandate mcp`
+  command refuses and names the old store — set `store` to its absolute path.
 - `mandate mcp` answers a missing or invalid configuration with one line and
   exit 1, as `mandate gateway` does, and a missing `mcp` extra with the line
   that installs it — not a traceback. (G261)

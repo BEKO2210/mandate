@@ -120,7 +120,16 @@ mandate mcp approve --config guard.json --receipt rcpt_4f1c…
 Approval is signed by the key that issued the grant, then revalidated: a grant
 revoked or a daily budget used up while the call waited turns it into a denial,
 and nothing runs. The call runs once — a second approval finds the receipt no
-longer waiting. The agent's own key cannot approve.
+longer waiting. The agent's own key cannot approve, and approving does not
+need it: an agent key that is missing or unreachable does not block the
+principal.
+
+Approval commits before the call is dispatched. If the process stops in
+between, `pending` lists the call as "approved, dispatch never started" and
+`approve --receipt …` dispatches it; the execution claim the engine takes
+atomically still means it runs at most once. What these commands print from
+the call — counterparty, arguments, reasons — is escaped, so a value crafted
+with terminal control sequences cannot redraw the screen you decide on.
 
 **Who can approve is who can read the principal key.** Without
 `principal_signer`, `init` writes that key to `<store>/keys/principal.key`. An

@@ -215,8 +215,14 @@ async def upstream_session(config: GuardConfig):
             yield session, listed.tools
 
 
-def open_guard(config: GuardConfig, call_tool, exposed: list[str]) -> tuple[McpGuard, dict[str, str]]:
-    """The engine and guard for these upstream tools, with every key proven."""
+def open_guard(
+    config: GuardConfig, call_tool, exposed: list[str], *, need_agent: bool = True,
+) -> tuple[McpGuard, dict[str, str]]:
+    """The engine and guard for these upstream tools, with every key proven.
+
+    `need_agent=False` is for approving: that path signs nothing as the agent,
+    so an agent key that is missing or unreachable must not stand in its way.
+    """
     try:
         engine, executor = build_engine(config, call_tool, exposed)
         # `Engine` asks the enforcer for its DID, which a remote signer
@@ -227,6 +233,12 @@ def open_guard(config: GuardConfig, call_tool, exposed: list[str]) -> tuple[McpG
         if callable(enforcer_check):
             enforcer_check()
         state = read_state(config) or bootstrap(config, engine)
+        if not need_agent:
+            guard = McpGuard(
+                engine=engine, agent_signer=None, grant_id=state["grant_id"],
+                mapping=config.mapping, tenant=config.tenant, executor=executor,
+            )
+            return guard, state
         signer = load_agent_signer(config)
     except SigningError as exc:
         # Includes the enforcer key: `Engine` asks it for its DID while
@@ -283,7 +295,7 @@ async def serve(config: GuardConfig) -> None:
             await server.run(r, w, server.create_initialization_options())
 
 
-async def approve_held(config: GuardConfig, receipt_id: str):
+async def approve_held(config: GuardConfig, receipt_id: str, *, resume: bool = False):
     """Approve a held call as its principal and run it against the upstream.
 
     Its own connection to the upstream: the guard serving the model may be
@@ -296,10 +308,13 @@ async def approve_held(config: GuardConfig, receipt_id: str):
     if read_state(config) is None:
         # Never bootstrap here: approving must not mint a principal and a grant.
         raise SystemExit(f"no guard is initialized in {config.store_path}; nothing is waiting")
-    principal = load_principal_signer(config)
+    # Resuming dispatches a call the principal already approved; it signs nothing.
+    principal = None if resume else load_principal_signer(config)
     async with upstream_session(config) as (session, upstream_tools):
         exposed, _ = _partition(config, [t.name for t in upstream_tools])
-        guard, _ = open_guard(config, session.call_tool, exposed)
+        guard, _ = open_guard(config, session.call_tool, exposed, need_agent=False)
+        if resume:
+            return await anyio.to_thread.run_sync(lambda: guard.resume(receipt_id))
         return await anyio.to_thread.run_sync(lambda: guard.approve(receipt_id, principal))
 
 
