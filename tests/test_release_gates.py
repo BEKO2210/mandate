@@ -127,3 +127,7 @@ def test_g255_the_image_is_pinned_and_does_not_run_as_root():
     rules = [line.strip() for line in Path(".dockerignore").read_text(encoding="utf-8").splitlines()]
     rules = [r for r in rules if r and not r.startswith("#")]
     assert rules[0] == "*", "the build context must start from nothing and allow files back in"
+    # An exception for a whole directory would let a key or .env dropped into
+    # it reach the build stage; the package is let back in as source files only.
+    package = [r for r in rules if r.startswith("!mandate")]
+    assert package and all(r.endswith(".py") for r in package), package

@@ -35,12 +35,15 @@ docker run --rm -v mandate-data:/data mandate gateway check --config /data/gatew
 docker run --rm -v mandate-data:/data mandate \
   keys new --db /data/store/mandate.sqlite --tenant acme --name ci
 
-docker run -d --name mandate -p 8080:8080 -v mandate-data:/data mandate
+docker run -d --name mandate -p 127.0.0.1:8080:8080 -v mandate-data:/data mandate
 curl -fsS localhost:8080/health
 ```
 
-The container listens on `0.0.0.0:8080` inside; publish it only where the
-agents that call it can reach it. The health check calls `/health` every 30
+The container listens on `0.0.0.0:8080` inside; the example publishes it on
+the host's loopback only. The gateway speaks plain HTTP, and every request
+carries a bearer key: for agents on other machines, put a TLS-terminating
+proxy in front of that loopback port rather than publishing it on the
+network. The health check calls `/health` every 30
 seconds.
 
 A key manager (`enforcer_signer` with `aws-kms`, `gcp-kms` or `vault-transit`)
@@ -53,9 +56,17 @@ The guard speaks MCP over stdio, so the agent runtime starts the container
 itself and keeps stdin open (`-i`):
 
 ```bash
+docker volume create mandate-mcp
+docker run --rm -v mandate-mcp:/data -v "$PWD/guard.json:/tmp/guard.json:ro" \
+  --entrypoint cp mandate /tmp/guard.json /data/guard.json
+docker run --rm -v mandate-mcp:/data mandate mcp init --config /data/guard.json
+
 docker run -i --rm -v mandate-mcp:/data mandate \
   mcp serve --config /data/guard.json
 ```
+
+`init` writes the principal, the agent and the grant into the volume once;
+`serve` then finds them there on every start.
 
 The upstream MCP server the guard starts (`upstream.command` in `guard.json`)
 has to exist inside the image. A server installed with `npx` or `uvx` on the
