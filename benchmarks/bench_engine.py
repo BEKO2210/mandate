@@ -19,9 +19,11 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import multiprocessing
 import os
 import platform
+import queue
 import sqlite3
 import statistics
 import sys
@@ -137,12 +139,39 @@ def percentiles(ns: list[int]) -> dict:
 
     def rank(p: float) -> float:
         # Nearest rank: a percentile that is an actual observation.
-        return ordered[max(0, min(len(ordered) - 1, round(p / 100 * len(ordered)) - 1))] / 1e6
+        return ordered[max(0, min(len(ordered) - 1, math.ceil(p / 100 * len(ordered)) - 1))] / 1e6
 
     return {
         "p50_ms": rank(50), "p95_ms": rank(95), "p99_ms": rank(99),
         "max_ms": ordered[-1] / 1e6, "mean_ms": statistics.fmean(ordered) / 1e6,
     }
+
+
+def _collect(workers: list, out, deadline: float) -> list[dict]:
+    # A worker that dies before reporting would otherwise leave the others
+    # waiting at the barrier and this loop waiting for the full deadline.
+    results: list[dict] = []
+    try:
+        while len(results) < len(workers):
+            try:
+                results.append(out.get(timeout=1))
+                continue
+            except queue.Empty:
+                pass
+            dead = [w for w in workers if w.exitcode not in (None, 0)]
+            if dead:
+                raise RuntimeError(f"worker exited with code {dead[0].exitcode} before reporting")
+            if all(w.exitcode is not None for w in workers) and out.empty():
+                raise RuntimeError("workers exited without reporting")
+            if time.monotonic() > deadline:
+                raise RuntimeError("workers did not report before the deadline")
+    except BaseException:
+        for w in workers:
+            if w.is_alive():
+                w.terminate()
+            w.join(timeout=10)
+        raise
+    return results
 
 
 def run(procs: int, requests: int, scenario: str, warmup: int, base: Path | None) -> dict:
@@ -156,7 +185,7 @@ def run(procs: int, requests: int, scenario: str, warmup: int, base: Path | None
     ]
     for w in workers:
         w.start()
-    results = [out.get(timeout=600) for _ in workers]
+    results = _collect(workers, out, deadline=time.monotonic() + 600)
     for w in workers:
         w.join(timeout=60)
     merged = {key: [v for r in results for v in r[key]] for key in ("submit", "execute", "total", "errors")}
@@ -181,12 +210,17 @@ def run(procs: int, requests: int, scenario: str, warmup: int, base: Path | None
     }
 
 
-def _mount_type(path: Path) -> str:
+def _mount_type(path: Path, mounts: str | None = None) -> str:
     try:
+        if mounts is None:
+            mounts = Path("/proc/mounts").read_text()
+        target = path.resolve()
         best, kind = "", "?"
-        for line in Path("/proc/mounts").read_text().splitlines():
+        for line in mounts.splitlines():
             _, mount, fstype, *_ = line.split()
-            if str(path.resolve()).startswith(mount) and len(mount) > len(best):
+            # By component: /tmp is not a prefix of /tmpdisk.
+            inside = target == Path(mount) or Path(mount) in target.parents
+            if inside and len(mount) > len(best):
                 best, kind = mount, fstype
         return kind
     except OSError:

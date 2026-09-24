@@ -52,8 +52,18 @@ decision throughput.
 **Overload is refused, not waved through.** A writer waits up to
 `busy_timeout` (5 s) for the lock. Beyond that the request fails — HTTP 503
 from the engine's storage error, or a 500 when it is the rate limiter's write
-that times out — and nothing is authorized or sent. No run above reached that
-point.
+that times out. What that leaves behind depends on which write timed out:
+
+- in `submit_intent` (or the rate limiter): the transaction rolls back —
+  nothing is authorized, reserved or sent;
+- claiming the execution: the receipt stays `AUTHORIZED` with its reservation,
+  and nothing is sent;
+- recording the result, after the upstream was called: the receipt stays
+  `EXECUTING` and the outcome is unknown. `reconcile_stale_executions` turns it
+  into `EXECUTION_UNKNOWN` with the reservation kept, to be settled with
+  `mandate gateway resolve`.
+
+No run above reached that point.
 
 ## Limits of the method
 
