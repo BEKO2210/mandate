@@ -1,4 +1,4 @@
-# Threat model (v0.9.0)
+# Threat model (v0.10.0)
 
 TRUSTED: gateway, KeyProvider, route registry, SQLite tx layer, executor code, server-side Route.network_policy, the api_keys table.
 UNTRUSTED: agent, agent JSON, network, unsigned human input, upstream bodies, DNS answers.

@@ -3,7 +3,7 @@
 All notable changes to this project are documented here.
 This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.10.0] — 2026-09-24
 
 ### Added
 - **Benchmarks and `docs/PERFORMANCE.md`.** `benchmarks/bench_engine.py`
