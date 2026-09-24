@@ -6,6 +6,16 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- **`mandate demo shop`: an agent buying office supplies through the MCP
+  guard.** A small shop served over MCP, a procurement grant (300 EUR a
+  day, 500 per order, two allowed vendors, approval above 100), and eight
+  steps played over stdio exactly as a client would — a catalogue read, a
+  purchase, a vendor the grant does not name, an order that names no vendor,
+  a held laptop, an order over the limit, the human approving the laptop
+  with `mandate mcp approve` while the guard runs, and the day's budget
+  running out. No model and no network; CI runs it.
+  `mandate mcp init --example shop` writes the same configuration to try it
+  in Claude Code or Cursor. See `examples/mcp_shop`. (G262–G264)
 - **Human approval over MCP works.** A call held for approval told the model
   it would run once the principal approved — and nothing could approve it.
   `mandate mcp pending` lists held calls with their tool, arguments and

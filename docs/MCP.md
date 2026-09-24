@@ -77,6 +77,12 @@ every client that starts the guard finds the same store.
 
 ## Connect Claude Code or Cursor
 
+To try it on something harmless first, `mandate mcp init --config guard.json
+--example shop` writes a configuration for the demo shop — a procurement grant
+with a daily budget, two allowed vendors and approval above 100 EUR — and
+`mandate demo shop` plays it through without a model. See
+[examples/mcp_shop](../examples/mcp_shop/README.md).
+
 ```bash
 mandate mcp init --config guard.json
 ```
@@ -226,6 +232,12 @@ enforcement boundary is the guard process, not the model: anything that can run
 code in that process can make the guard sign — with a local key by reading it,
 with a key manager by asking. Run it as the agent runtime's child process, with
 the store readable only by that user.
+
+The guard authorizes what the call *says*: the amount in `amount_from`, the
+payee in `counterparty_from`. It cannot know what the upstream will actually
+charge. An upstream that bills its own price must refuse a stated amount that
+differs from it — the demo shop does (a laptop "for 1 EUR" is refused, not
+booked) — or the approval threshold can be walked around by understating.
 
 Moving the key out of the process (`agent_signer`) removes the exfiltratable
 secret and makes revocation effective. It does not shrink the boundary; the
