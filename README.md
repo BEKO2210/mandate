@@ -1,4 +1,4 @@
-# Mandate v0.9.0
+# Mandate v0.10.0
 
 Enforcement gateway for AI-agent grants.
 
@@ -15,8 +15,39 @@ Mandate is not on PyPI yet. The PyPI project named `mandate` is an unrelated
 package, so install from the repository — or from a checkout with
 `pip install -e ".[mcp]"`.
 
+What a decision costs, and where the ceiling is: [docs/PERFORMANCE.md](docs/PERFORMANCE.md).
+
 Or as a container — non-root, configuration and ledger in one volume:
 `docker build -t mandate .`, then see [docs/DOCKER.md](docs/DOCKER.md).
+
+## What v0.10.0 adds
+
+Installable, runnable, demonstrable — and two holes closed on the way.
+
+**A human approval that actually runs the call.** A call above
+`require_human_above` used to be held with no way forward. Now:
+
+```bash
+mandate mcp pending --config guard.json                  # what is waiting, with its arguments
+mandate mcp approve --config guard.json --receipt rcpt_…  # signs, then dispatches exactly once
+```
+
+A relative `store` resolves next to the configuration file, so Claude Code or
+Cursor starting the guard from another directory no longer creates a fresh
+identity with fresh budgets. `mcp init` prints the lines to paste into both.
+
+**An agent that shops, end to end.** `mandate demo shop` drives a real MCP
+guard over stdio: a catalogue read, an order, a vendor off the allow-list, a
+missing vendor, a laptop that needs a human, one over the limit, the human
+approving, and the daily cap. Two orders, a chain that verifies.
+
+**Fail-closed fixes.** An approval without `created_at` counted as fresh; a
+grant's vendor allow-list let through a call that named no vendor at all.
+Both are refused now.
+
+**A container and numbers.** A non-root image with a digest-pinned base
+([docs/DOCKER.md](docs/DOCKER.md)), and what a decision costs across worker
+processes on one ledger ([docs/PERFORMANCE.md](docs/PERFORMANCE.md)).
 
 ## What v0.9.0 adds
 

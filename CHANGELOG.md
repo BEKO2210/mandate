@@ -3,9 +3,16 @@
 All notable changes to this project are documented here.
 This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.10.0] — 2026-09-24
 
 ### Added
+- **Benchmarks and `docs/PERFORMANCE.md`.** `benchmarks/bench_engine.py`
+  times what the gateway does per call — verify, evaluate, reserve, sign and
+  chain, then execute and sign again — against a stub upstream, across worker
+  processes on one ledger, with p50/p95/p99, throughput and every error
+  counted. On a 4-vCPU VM: about 3.6 ms per decision, about 240 decisions a
+  second, and that ceiling does not rise with more workers — one SQLite
+  writer at a time — while the tail does. Written down, not hidden. (G265)
 - **`mandate demo shop`: an agent buying office supplies through the MCP
   guard.** A small shop served over MCP, a procurement grant (300 EUR a
   day, 500 per order, two allowed vendors, approval above 100), and eight
