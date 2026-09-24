@@ -32,6 +32,7 @@ def evaluate(
     skip_human: bool = False,
     allowed_audiences: list[str] | None = None,
 ) -> Decision:
+    """Judge an intent against a grant's scopes, budget, and counterparty rules."""
     reasons: list[str] = []
     now = datetime.now(timezone.utc)
 

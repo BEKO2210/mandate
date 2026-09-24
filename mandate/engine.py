@@ -604,6 +604,7 @@ class Engine:
         self, signed_approval: dict[str, Any], expected_principal: str | None = None,
         tenant: str = DEFAULT_TENANT,
     ) -> dict[str, Any]:
+        """Verify a signed approval and, if it holds up, move its receipt on."""
         try:
             reject_forbidden(signed_approval)
         except ValidationError as exc:

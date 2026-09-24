@@ -155,6 +155,7 @@ def _currency(args: dict[str, Any], rule: ToolRule) -> str:
 
 
 def _counterparty(args: dict[str, Any], key: str) -> str:
+    """Require the configured counterparty argument, non-empty and in bounds."""
     # Configured means required: a call that leaves its counterparty out
     # would otherwise be judged as if it named none, and an allow-list is
     # not a question the call gets to skip.
