@@ -217,7 +217,11 @@ def main(argv: list[str] | None = None) -> int:
                 return 1
             from .demo_shop.scenario import EXPECTED, run
 
-            result = run(args.dir)
+            try:
+                result = run(args.dir)
+            except ValueError as exc:
+                print(f"demo shop: {exc}", file=sys.stderr)
+                return 1
             return 0 if result["outcomes"] == EXPECTED and result["chain_ok"] else 1
         run_belkis_demo()
         return 0

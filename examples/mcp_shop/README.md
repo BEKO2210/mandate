@@ -33,6 +33,10 @@ Orders placed: 2 (290 EUR). Receipt chain: intact.
 The script starts the guard over stdio exactly as an MCP client does, and
 approves step 5 with `mandate mcp approve` while the guard is running.
 
+The shop books only at catalogue prices. The guard authorizes the amount the
+agent states, so a shop that accepted "a laptop for 1 EUR" would let an order
+slip under the approval threshold; this one refuses it, and nothing is ordered.
+
 ## Try it with Claude Code or Cursor
 
 ```bash

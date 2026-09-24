@@ -24,6 +24,21 @@ class Shop:
         return "\n".join(lines)
 
     def buy(self, vendor: str, item: str, amount: float, currency: str) -> str:
+        """Place an order at the catalogue price, or refuse it.
+
+        The guard authorizes the amount the agent states. A shop that booked
+        whatever it was told would let "a laptop for 1 EUR" slip under the
+        approval threshold and ship at 250 — so the price is the catalogue's,
+        and a stated amount that differs is refused.
+        """
+        listed = next((p for p in CATALOG if p["vendor"] == vendor and p["item"] == item), None)
+        if listed is None:
+            raise ValueError(f"{vendor} does not sell {item!r}")
+        if amount != listed["price"] or currency != listed["currency"]:
+            raise ValueError(
+                f"{item} from {vendor} costs {listed['price']} {listed['currency']}, "
+                f"not {amount} {currency}; nothing was ordered"
+            )
         order = {
             "order_id": "ord_" + uuid4().hex[:10],
             "vendor": vendor,

@@ -35,7 +35,10 @@ class ShopUpstream:
         if name == "list_products":
             text = self.shop.list_products()
         else:
-            text = self.shop.buy(arguments["vendor"], arguments["item"], arguments["amount"], arguments["currency"])
+            try:
+                text = self.shop.buy(arguments["vendor"], arguments["item"], arguments["amount"], arguments["currency"])
+            except ValueError as exc:
+                return {"is_error": True, "content": [{"type": "text", "text": str(exc)}]}
         return {"is_error": False, "content": [{"type": "text", "text": text}]}
 
 
@@ -69,6 +72,15 @@ def test_g262_the_shop_scenario_decides_as_documented(tmp_path):
     assert [name for name, _ in upstream.calls] == ["list_products", "buy", "buy"]
     assert engine.verify_chain(expect_signer=engine.enforcer_did).ok
 
+    # Understating the price does not walk around the threshold: the guard
+    # authorizes the 1 EUR it is told, and the shop refuses to sell at it.
+    understated = guard.call(
+        "buy", {"vendor": "office-depot.example", "item": "laptop", "amount": 1, "currency": "EUR"},
+    )
+    assert not understated.allowed and understated.outcome == "EXECUTION_FAILED"
+    assert "costs 250 EUR" in understated.text
+    assert len(shop.orders()) == 2, "nothing is booked at a price the shop does not charge"
+
 
 def test_g263_the_demo_runs_end_to_end_over_stdio(tmp_path):
     """The real thing: the guard as a subprocess an MCP client starts, the
@@ -82,6 +94,11 @@ def test_g263_the_demo_runs_end_to_end_over_stdio(tmp_path):
     assert len(result["orders"]) == 2
     assert result["chain_ok"]
     assert "UNMAPPED" in (tmp_path / "guard.log").read_text(encoding="utf-8")
+
+    # A second run in the same place would inherit today's spent budget.
+    with pytest.raises(ValueError, match="already holds a demo run"):
+        run(tmp_path, quiet=True)
+    assert len(Shop(tmp_path / "orders.jsonl").orders()) == 2
 
 
 def test_g264_the_example_configuration_is_the_one_init_writes():

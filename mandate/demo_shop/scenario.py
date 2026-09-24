@@ -109,6 +109,14 @@ def run(directory: str | Path | None = None, quiet: bool = False) -> dict:
     from ..mcp.server import build_engine
 
     base = Path(directory) if directory else Path(tempfile.mkdtemp(prefix="mandate-shop-"))
+    # A second run in the same place would inherit the first one's orders and,
+    # the same day, its spent budget — and then not play as documented.
+    leftovers = [n for n in ("guard.json", "orders.jsonl", "store") if (base / n).exists()]
+    if leftovers:
+        raise ValueError(
+            f"{base} already holds a demo run ({', '.join(leftovers)}); "
+            f"pick an empty directory, or leave out --dir for a fresh one"
+        )
     base.mkdir(parents=True, exist_ok=True)
     orders = base / "orders.jsonl"
     config_path = base / "guard.json"

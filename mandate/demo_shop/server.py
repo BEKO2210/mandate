@@ -53,6 +53,8 @@ def make_shop_server(shop: Shop):
                 text, error = shop.buy(args["vendor"], args["item"], args["amount"], args["currency"]), False
             except KeyError as exc:
                 text, error = f"missing argument {exc}", True
+            except ValueError as exc:  # not in the catalogue, or not its price
+                text, error = str(exc), True
         else:
             text, error = f"unknown tool {params.name!r}", True
         return types.CallToolResult(content=[types.TextContent(type="text", text=text)], isError=error)

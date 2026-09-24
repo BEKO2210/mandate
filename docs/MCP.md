@@ -233,6 +233,12 @@ code in that process can make the guard sign — with a local key by reading it,
 with a key manager by asking. Run it as the agent runtime's child process, with
 the store readable only by that user.
 
+The guard authorizes what the call *says*: the amount in `amount_from`, the
+payee in `counterparty_from`. It cannot know what the upstream will actually
+charge. An upstream that bills its own price must refuse a stated amount that
+differs from it — the demo shop does (a laptop "for 1 EUR" is refused, not
+booked) — or the approval threshold can be walked around by understating.
+
 Moving the key out of the process (`agent_signer`) removes the exfiltratable
 secret and makes revocation effective. It does not shrink the boundary; the
 grant's limits do that.
